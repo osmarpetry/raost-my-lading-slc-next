@@ -1,0 +1,9 @@
+/* @vitest-environment node */
+
+import { {{camelCase name}}Example } from "@/server/{{kebabCase name}}";
+
+describe("{{camelCase name}}Example", () => {
+  it("returns a stable placeholder", () => {
+    expect({{camelCase name}}Example()).toBe("{{kebabCase name}}");
+  });
+});

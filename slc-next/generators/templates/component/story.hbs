@@ -1,0 +1,19 @@
+import type { Meta, StoryObj } from "@storybook/nextjs-vite";
+
+import { {{pascalCase name}} } from "@/components/{{kebabCase name}}/{{kebabCase name}}";
+
+const meta = {
+  title: "Generated/{{pascalCase name}}",
+  component: {{pascalCase name}},
+  tags: ["autodocs"],
+} satisfies Meta<typeof {{pascalCase name}}>;
+
+export default meta;
+
+type Story = StoryObj<typeof meta>;
+
+export const Default: Story = {
+  args: {
+    children: "Generated component",
+  },
+};

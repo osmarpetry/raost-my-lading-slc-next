@@ -1,0 +1,106 @@
+@import "tailwindcss";
+@import "../design/styles/generated-tokens.css";
+@import "../design/styles/effects.css";
+
+@theme inline {
+  --font-display: var(--font-display);
+  --font-body: var(--font-body);
+  --font-mono: var(--font-mono);
+
+  --color-surface-app: var(--color-surface-app);
+  --color-surface-panel: var(--color-surface-panel);
+  --color-surface-panel-elevated: var(--color-surface-panelElevated);
+  --color-surface-terminal: var(--color-surface-terminal);
+  --color-surface-terminal-topbar: var(--color-surface-terminalTopbar);
+
+  --color-text-primary: var(--color-text-primary);
+  --color-text-secondary: var(--color-text-secondary);
+  --color-text-inverse: var(--color-text-inverse);
+
+  --color-border-subtle: var(--color-border-subtle);
+  --color-border-strong: var(--color-border-strong);
+
+  --color-accent-brand: var(--color-accent-brand);
+  --color-accent-brand-strong: var(--color-accent-brandStrong);
+  --color-accent-danger: var(--color-accent-danger);
+  --color-accent-warning: var(--color-accent-warning);
+  --color-accent-success: var(--color-accent-success);
+  --color-accent-info: var(--color-accent-info);
+
+  --color-status-idle: var(--color-status-idle);
+  --color-status-live: var(--color-status-live);
+  --color-status-error: var(--color-status-error);
+
+  --radius-panel: var(--radius-panel);
+  --radius-card: var(--radius-card);
+  --radius-input: var(--radius-input);
+  --radius-button: var(--radius-button);
+  --radius-pill: var(--radius-pill);
+
+  --shadow-panel: var(--effect-shadow-panel);
+  --shadow-floating: var(--effect-shadow-floating);
+}
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+html {
+  overscroll-behavior-y: none;
+}
+
+body {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  background-color: #8b572f;
+  background-image:
+    linear-gradient(180deg, rgba(61, 33, 14, 0.14), rgba(20, 10, 4, 0.18)),
+    url("/wood-panel-tile.svg");
+  background-position:
+    center,
+    top center;
+  background-repeat: no-repeat, repeat-x;
+  background-size:
+    100% 100%,
+    auto 100%;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(circle at top center, rgba(255, 241, 216, 0.18), transparent 32%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 22%, rgba(0, 0, 0, 0.08));
+  mix-blend-mode: soft-light;
+  pointer-events: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+h1,
+h2,
+p,
+ul {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}

@@ -1,0 +1,9 @@
+import { cn } from "@/lib/shared/cn";
+
+import { {{pascalCase name}}Variants } from "./{{kebabCase name}}.variants";
+
+interface {{pascalCase name}}Props extends React.HTMLAttributes<HTMLDivElement> {}
+
+export function {{pascalCase name}}({ className, ...props }: {{pascalCase name}}Props) {
+  return <div className={cn({{pascalCase name}}Variants(), className)} {...props} />;
+}

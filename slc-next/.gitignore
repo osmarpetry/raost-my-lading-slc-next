@@ -1,0 +1,25 @@
+# dependencies
+/node_modules
+
+# next
+/.next
+/.next-test*
+/tsconfig.next-test*.json
+/out
+
+# local env
+.env*
+!.env.example
+
+# tests
+/coverage
+/playwright-report
+/test-results
+/tests/.features-gen
+
+# storybook
+/storybook-static
+
+# misc
+.DS_Store
+*.log
