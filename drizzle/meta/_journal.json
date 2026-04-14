@@ -8,6 +8,13 @@
       "when": 1776077260715,
       "tag": "0000_nebulous_silverclaw",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1777286400000,
+      "tag": "0001_add_canonical_summary",
+      "breakpoints": true
     }
   ]
 }

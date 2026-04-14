@@ -30,8 +30,10 @@ async function waitFor<T>(
 describe("scans API", () => {
   let baseUrl = "";
   let closeServer: (() => Promise<void>) | undefined;
+  const previousMockScan = process.env.SLC_MOCK_SCAN;
 
   beforeAll(async () => {
+    process.env.SLC_MOCK_SCAN = "true";
     const server = await startTestServer();
     baseUrl = server.baseUrl;
     closeServer = server.close;
@@ -44,6 +46,11 @@ describe("scans API", () => {
 
   afterAll(async () => {
     await closeServer?.();
+    if (previousMockScan === undefined) {
+      delete process.env.SLC_MOCK_SCAN;
+    } else {
+      process.env.SLC_MOCK_SCAN = previousMockScan;
+    }
   });
 
   it("POST /api/scans creates a scan", async () => {
@@ -130,5 +137,74 @@ describe("scans API", () => {
     expect(snapshots.length + eventTypes.length).toBeGreaterThan(0);
 
     socket.disconnect();
+  });
+
+  it("GET /api/scans/:scanId returns a completed scan for direct route access", async () => {
+    const created = await fetch(`${baseUrl}/api/scans`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ url: "https://example.com" }),
+    });
+    const started = (await created.json()) as { scanId: string };
+
+    // Poll until completion
+    let scan = await fetch(`${baseUrl}/api/scans/${started.scanId}`).then((r) => r.json());
+    const deadline = Date.now() + 15_000;
+    while (scan.status !== "COMPLETED" && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      scan = await fetch(`${baseUrl}/api/scans/${started.scanId}`).then((r) => r.json());
+    }
+
+    expect(scan.status).toBe("COMPLETED");
+    expect(scan.id).toBe(started.scanId);
+    expect(scan.fullRoast).toBeTruthy();
+    expect(scan.qualityScore).not.toBeNull();
+
+    // Second GET should still be completed instantly
+    const secondGet = await fetch(`${baseUrl}/api/scans/${started.scanId}`);
+    const secondScan = scanJobSchema.parse(await secondGet.json());
+    expect(secondScan.status).toBe("COMPLETED");
+  });
+
+  it("POST /api/scans reuses exact snapshot cache on identical URL", async () => {
+    const body = JSON.stringify({ url: "https://example.com" });
+
+    const first = await fetch(`${baseUrl}/api/scans`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    });
+    const firstStarted = (await first.json()) as { scanId: string };
+
+    // Wait for first to complete
+    let firstScan = await fetch(`${baseUrl}/api/scans/${firstStarted.scanId}`).then((r) => r.json());
+    const deadline = Date.now() + 15_000;
+    while (firstScan.status !== "COMPLETED" && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      firstScan = await fetch(`${baseUrl}/api/scans/${firstStarted.scanId}`).then((r) => r.json());
+    }
+    expect(firstScan.status).toBe("COMPLETED");
+
+    // Second scan with same URL
+    const second = await fetch(`${baseUrl}/api/scans`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    });
+    const secondStarted = (await second.json()) as { scanId: string };
+
+    // Should complete almost instantly because of exact cache
+    let secondScan = await fetch(`${baseUrl}/api/scans/${secondStarted.scanId}`).then((r) => r.json());
+    const instantDeadline = Date.now() + 2_000;
+    while (secondScan.status !== "COMPLETED" && Date.now() < instantDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      secondScan = await fetch(`${baseUrl}/api/scans/${secondStarted.scanId}`).then((r) => r.json());
+    }
+
+    expect(secondScan.status).toBe("COMPLETED");
+    expect(secondScan.cacheState).toBe("cached");
+    expect(secondScan.fullRoast).toBe(firstScan.fullRoast);
   });
 });

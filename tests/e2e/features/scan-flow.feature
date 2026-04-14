@@ -38,3 +38,26 @@ Feature: Live scan flow
   Scenario: No auth or billing UI is visible
     Given the live scan page is open
     Then no auth or billing controls should be visible
+
+  Scenario: Direct route access restores completed scan instantly
+    Given a completed scan exists for "https://example.com"
+    When I open the scan directly via URL
+    Then I should see the completed verdict instantly
+
+  Scenario: Exact snapshot cache is reused for identical URL
+    Given the live scan page is open
+    When I submit "https://example.com"
+    And I wait for the scan to complete
+    And I submit "https://example.com" again
+    Then I should see "Using cached analysis" in the terminal
+    And the scan should complete with the same result
+
+  @reset-state
+  Scenario: Fresh run is triggered when snapshot similarity is below 80%
+    Given the live scan page is open
+    When I submit "https://example.net"
+    And I wait for the scan to complete
+    And the similarity check is forced below threshold
+    And I submit "https://example.net" again
+    Then I should see "Scan started" in the terminal
+    And the scan should complete with a different result

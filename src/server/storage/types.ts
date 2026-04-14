@@ -31,6 +31,7 @@ export interface PersistedScanArtifacts {
   lighthouseDesktopJson?: Record<string, unknown> | null;
   siteUnderstandingJson?: SiteUnderstandingSkillOutput | null;
   finalPayloadJson?: FinalRoastPayload | null;
+  canonicalSummary?: string | null;
 }
 
 export interface PersistedCompletedRun {
@@ -55,5 +56,11 @@ export interface ScanRunStore {
   getScan(scanId: string): Promise<ScanJob | null>;
   getArtifacts(scanId: string): Promise<ScanArtifactsResponse | null>;
   findCompletedBySnapshotHash(snapshotHash: string): Promise<PersistedCompletedRun | null>;
+  findSimilarCompletedRun(
+    normalizedUrl: string,
+    snapshotHash: string,
+    canonicalSummary: string,
+    threshold?: number,
+  ): Promise<PersistedCompletedRun | null>;
   clear(): Promise<void>;
 }

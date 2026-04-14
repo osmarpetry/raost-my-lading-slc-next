@@ -39,6 +39,7 @@ export const scanRuns = pgTable(
     finalPayloadJson: jsonb("final_payload_json"),
     finalText: text("final_text"),
     previewText: text("preview_text"),
+    canonicalSummary: text("canonical_summary"),
     errorMessage: text("error_message"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),

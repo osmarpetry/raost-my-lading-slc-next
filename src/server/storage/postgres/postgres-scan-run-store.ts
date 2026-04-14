@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, ne, sql } from "drizzle-orm";
 import type { Pool } from "pg";
 
 import type {
@@ -12,6 +12,7 @@ import type {
   ScanJob,
   SiteUnderstandingSkillOutput,
 } from "@/lib/shared/scans";
+import { computeTextSimilarity } from "@/lib/server/snapshot-similarity";
 import { scanJobSchema } from "@/lib/shared/scans";
 import { createPostgresDb, createPostgresPool } from "@/server/storage/postgres/db";
 import { scanEvents, scanRuns } from "@/server/storage/postgres/schema";
@@ -94,6 +95,7 @@ export class PostgresScanRunStore implements ScanRunStore {
         finalPayloadJson: artifacts.finalPayloadJson ?? scan.finalPayload ?? null,
         finalText: scan.fullRoast ?? null,
         previewText: scan.previewRoast ?? null,
+        canonicalSummary: artifacts.canonicalSummary ?? null,
         errorMessage: scan.errorMessage ?? null,
         createdAt: scan.createdAt ? new Date(scan.createdAt) : new Date(),
         updatedAt: scan.updatedAt ? new Date(scan.updatedAt) : new Date(),
@@ -125,6 +127,7 @@ export class PostgresScanRunStore implements ScanRunStore {
           finalPayloadJson: artifacts.finalPayloadJson ?? scan.finalPayload ?? null,
           finalText: scan.fullRoast ?? null,
           previewText: scan.previewRoast ?? null,
+          canonicalSummary: artifacts.canonicalSummary ?? null,
           errorMessage: scan.errorMessage ?? null,
           updatedAt: scan.updatedAt ? new Date(scan.updatedAt) : new Date(),
         },
@@ -238,11 +241,12 @@ export class PostgresScanRunStore implements ScanRunStore {
       siteUnderstanding: parseJson(row.siteUnderstandingJson, null),
       lighthouseInterpretation: null,
       finalPayload: parseJson(row.finalPayloadJson, null),
+      canonicalSummary: row.canonicalSummary ?? null,
       findings: [],
       events,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
-    } satisfies Partial<ScanJob>);
+    } satisfies Partial<ScanJob & { canonicalSummary?: string | null }>);
   }
 
   async getScan(scanId: string) {
@@ -306,6 +310,44 @@ export class PostgresScanRunStore implements ScanRunStore {
       finalPayload: scan.finalPayload,
       providerStatus: scan.providerStatus,
     };
+  }
+
+  async findSimilarCompletedRun(
+    normalizedUrl: string,
+    snapshotHash: string,
+    canonicalSummary: string,
+    threshold = 0.8,
+  ): Promise<PersistedCompletedRun | null> {
+    const rows = await this.db
+      .select()
+      .from(scanRuns)
+      .where(
+        and(
+          eq(scanRuns.normalizedUrl, normalizedUrl),
+          eq(scanRuns.status, "COMPLETED"),
+          ne(scanRuns.snapshotHash, snapshotHash),
+          sql`${scanRuns.canonicalSummary} IS NOT NULL`,
+        ),
+      )
+      .orderBy(desc(scanRuns.updatedAt))
+      .limit(20);
+
+    for (const row of rows) {
+      const summary = row.canonicalSummary ?? "";
+      const similarity = computeTextSimilarity(canonicalSummary, summary);
+      if (similarity >= threshold) {
+        const scan = await this.hydrateScan(row);
+        if (scan.finalPayload) {
+          return {
+            scan,
+            finalPayload: scan.finalPayload,
+            providerStatus: scan.providerStatus,
+          };
+        }
+      }
+    }
+
+    return null;
   }
 
   async clear() {

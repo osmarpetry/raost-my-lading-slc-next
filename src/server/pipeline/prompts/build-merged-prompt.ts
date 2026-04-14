@@ -5,6 +5,7 @@ import type {
   SemanticSnapshot,
   SiteUnderstandingSkillOutput,
 } from "@/lib/shared/scans";
+import type { CategoryFindings } from "@/server/pipeline/skills/findings-skill";
 
 export function buildMergedPrompt({
   promptPack,
@@ -52,6 +53,9 @@ export function buildMergedPrompt({
     `Proof blocks: ${snapshot.proofSummary ?? "none"}`,
     `Top pages summary: ${snapshot.pagesSummary}`,
     "",
+    "NORMALIZED EXTRACTED PAGE TEXT",
+    snapshot.canonicalText.slice(0, 3_000),
+    "",
     "OUTPUT RULES",
     "- Open with strongest diagnosis",
     "- Mention what already works before fixes",
@@ -67,12 +71,14 @@ export function buildFinalRoastPayload({
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   lighthouseInterpretation: _lighthouseInterpretation,
   finalText,
+  categoryFindings,
 }: {
   snapshotHash: string;
   promptPackId: string;
   siteUnderstanding: SiteUnderstandingSkillOutput;
   lighthouseInterpretation: LighthouseInterpretationSkillOutput;
   finalText: string;
+  categoryFindings?: CategoryFindings | null;
 }): FinalRoastPayload {
   return {
     headlineDiagnosis: siteUnderstanding.priorityFixes[0],
@@ -87,5 +93,6 @@ export function buildFinalRoastPayload({
     usedPromptPackId: promptPackId,
     usedSources: ["siteUnderstanding", "lighthouseInterpretation", "snapshot", "openai"],
     finalText: finalText.trim(),
+    categoryFindings: categoryFindings ?? null,
   };
 }

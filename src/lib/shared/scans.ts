@@ -29,6 +29,7 @@ export type SiteType =
   | "AGENCY"
   | "CONSULTING"
   | "CONTENT"
+  | "EDUCATION_PLATFORM"
   | "OTHER";
 export type LikelyConversionGoal =
   | "CONTACT"
@@ -158,6 +159,12 @@ export interface PromptPack {
   forbiddenMoves: string[];
 }
 
+export interface CategoryFinding {
+  title: string;
+  fix: string;
+  severity: "HIGH" | "MEDIUM";
+}
+
 export interface FinalRoastPayload {
   headlineDiagnosis: string;
   whatSiteSells: string;
@@ -171,6 +178,11 @@ export interface FinalRoastPayload {
   usedPromptPackId: string;
   usedSources: string[];
   finalText: string;
+  categoryFindings?: {
+    marketing: CategoryFinding;
+    seo: CategoryFinding;
+    performance: CategoryFinding;
+  } | null;
 }
 
 export interface ExternalLinkSummary {
@@ -220,6 +232,7 @@ export interface SemanticSnapshot {
 
 export interface ScanFinding {
   code: string;
+  category?: "MARKETING" | "SEO" | "PERFORMANCE" | null;
   severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   title: string;
   problem?: string | null;
@@ -242,6 +255,8 @@ export interface ScanJob {
   cacheState?: CacheState | null;
   currentStep?: string | null;
   finalResponseState?: FinalResponseState | null;
+  cachedFromSnapshotId?: string | null;
+  cachedFromRunAt?: string | null;
   status: string;
   errorMessage?: string | null;
   previewRoast?: string | null;
@@ -395,6 +410,12 @@ const routeMapSummarySchema = z.object({
   childUrls: z.array(z.string().min(1)),
 });
 
+const categoryFindingSchema = z.object({
+  title: z.string().min(1),
+  fix: z.string().min(1),
+  severity: z.enum(["HIGH", "MEDIUM"]),
+});
+
 export const finalRoastPayloadSchema = z.object({
   headlineDiagnosis: z.string().min(1),
   whatSiteSells: z.string().min(1),
@@ -408,6 +429,14 @@ export const finalRoastPayloadSchema = z.object({
   usedPromptPackId: z.string().min(1),
   usedSources: z.array(z.string().min(1)),
   finalText: z.string().min(1),
+  categoryFindings: z
+    .object({
+      marketing: categoryFindingSchema,
+      seo: categoryFindingSchema,
+      performance: categoryFindingSchema,
+    })
+    .nullable()
+    .optional(),
 });
 
 export const siteUnderstandingSkillOutputSchema = z.object({
@@ -419,6 +448,7 @@ export const siteUnderstandingSkillOutputSchema = z.object({
     "AGENCY",
     "CONSULTING",
     "CONTENT",
+    "EDUCATION_PLATFORM",
     "OTHER",
   ]),
   primaryOffer: z.string().min(1),
@@ -472,6 +502,7 @@ export const scanEventSchema = z.object({
 
 export const scanFindingSchema = z.object({
   code: z.string().min(1),
+  category: z.enum(["MARKETING", "SEO", "PERFORMANCE"]).nullable().optional(),
   severity: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]),
   title: z.string().min(1),
   problem: z.string().nullable().optional(),
@@ -519,6 +550,8 @@ export const scanJobSchema = z.object({
     .enum(["RUNNING", "PARTIAL", "COMPLETED", "FAILED", "PAUSED"])
     .nullable()
     .optional(),
+  cachedFromSnapshotId: z.string().nullable().optional(),
+  cachedFromRunAt: z.string().nullable().optional(),
   status: z.string().min(1),
   errorMessage: z.string().nullable().optional(),
   previewRoast: z.string().nullable().optional(),

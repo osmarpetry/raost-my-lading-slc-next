@@ -24,6 +24,10 @@ function inferSiteType(snapshot: SemanticSnapshot): SiteType {
     return "SAAS";
   }
 
+  if (/\beducation\b|\blearning\b|\bschool\b|\bkids\b|\bchildren\b|\bstudent\b|\bcurriculum\b|\bacademy\b/.test(haystack)) {
+    return "EDUCATION_PLATFORM";
+  }
+
   if (/\bagency\b|\bclient work\b|\bservices\b/.test(haystack)) {
     return "AGENCY";
   }
@@ -80,7 +84,9 @@ export async function runSiteUnderstandingSkill(
           ? "Specialized hiring platform and recruitment trust"
           : siteType === "SAAS"
             ? "Software product value proposition"
-            : "Current site offer";
+            : siteType === "EDUCATION_PLATFORM"
+              ? "Children's learning platform and educational trust"
+              : "Current site offer";
   const targetAudience =
     homepageFailure
       ? ["visitors hitting a broken page"]
@@ -88,7 +94,9 @@ export async function runSiteUnderstandingSkill(
         ? ["hiring managers", "founders", "recruiters"]
         : siteType === "RECRUITMENT_PLATFORM"
           ? ["recruiters", "hiring managers", "security leaders"]
-          : ["buyers", "visitors"];
+          : siteType === "EDUCATION_PLATFORM"
+            ? ["parents", "teachers", "young learners"]
+            : ["buyers", "visitors"];
   const quickWins =
     homepageFailure
       ? [
@@ -108,7 +116,13 @@ export async function runSiteUnderstandingSkill(
               "Add compare block against generic alternatives.",
               "Add trust quotes from real recruiters or customers.",
             ]
-          : [
+          : siteType === "EDUCATION_PLATFORM"
+            ? [
+                "Make the learning outcome promise visible above the fold with age groups and subjects.",
+                "Add parent trust signals near the download CTA: awards, educator endorsements, or privacy certifications.",
+                "Show a short demo preview or screenshot gallery so visitors see the experience before installing.",
+              ]
+            : [
               "Move strongest proof closer to first CTA.",
               "Clarify main promise in first visible section.",
               "Trim generic copy and add concrete examples.",
@@ -127,7 +141,13 @@ export async function runSiteUnderstandingSkill(
       ? ["working page response", "usable landing experience", "valid render at submitted URL"]
       : ["clear proof near CTA", "more explicit outcomes", "more direct trust support"],
     likelyConversionGoal:
-      siteType === "RECRUITMENT_PLATFORM" ? "START_TRIAL" : siteType === "PORTFOLIO" ? "CONTACT" : "OTHER",
+      siteType === "RECRUITMENT_PLATFORM"
+        ? "START_TRIAL"
+        : siteType === "PORTFOLIO"
+          ? "CONTACT"
+          : siteType === "EDUCATION_PLATFORM"
+            ? "SIGN_UP"
+            : "OTHER",
     businessUnderstandingScore: clampScore(seoBase + 10),
     clarityScore: clampScore(clarityBase),
     trustScore: clampScore(trustBase),

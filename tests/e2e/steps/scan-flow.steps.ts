@@ -1,7 +1,13 @@
 import { expect } from "@playwright/test";
 import { createBdd } from "playwright-bdd";
 
-const { Given, Then, When } = createBdd();
+const { Before, Given, Then, When } = createBdd();
+
+Before({ tags: "@reset-state" }, async ({ request }) => {
+  await request.post("/api/test/reset");
+});
+
+let cachedScanId: string | null = null;
 
 Given("the live scan page is open", async ({ page }) => {
   await page.goto("/");
@@ -81,4 +87,62 @@ Then("no auth or billing controls should be visible", async ({ page }) => {
   await expect(page.getByText(/credits/i)).toHaveCount(0);
   await expect(page.getByText(/checkout/i)).toHaveCount(0);
   await expect(page.getByText(/pricing/i)).toHaveCount(0);
+});
+
+Given("a completed scan exists for {string}", async ({ page }, url: string) => {
+  const response = await page.request.post("/api/scans", {
+    data: { url },
+  });
+  expect(response.status()).toBe(201);
+  const body = (await response.json()) as { scanId: string };
+  cachedScanId = body.scanId;
+
+  // Poll until completion
+  const deadline = Date.now() + 15_000;
+  let scan = await page.request.get(`/api/scans/${cachedScanId}`).then((r) => r.json());
+  while (scan.status !== "COMPLETED" && Date.now() < deadline) {
+    await page.waitForTimeout(200);
+    scan = await page.request.get(`/api/scans/${cachedScanId}`).then((r) => r.json());
+  }
+  expect(scan.status).toBe("COMPLETED");
+});
+
+When("I open the scan directly via URL", async ({ page }) => {
+  expect(cachedScanId).not.toBeNull();
+  await page.goto(`/?scanId=${cachedScanId}`);
+});
+
+Then("I should see the completed verdict instantly", async ({ page }) => {
+  const log = page.getByRole("log");
+  // Should already show completed within a short timeout
+  await expect(log).toContainText("Scan completed", { timeout: 3_000 });
+  await expect(page.getByText(/Latest run/)).toBeVisible();
+});
+
+When("the similarity check is forced below threshold", async ({ request }) => {
+  await request.post("/api/test/similarity-override", { data: { value: 0.79 } });
+});
+
+When("I submit {string} again", async ({ page }, url: string) => {
+  await page.getByLabel("Landing page URL").fill(url);
+  await page.getByRole("button", { name: /start scan/i }).click();
+});
+
+Then("I should see {string} in the terminal", async ({ page }, text: string) => {
+  const log = page.getByRole("log");
+  await expect(log).toContainText(text);
+});
+
+Then("the scan should complete with the same result", async ({ page }) => {
+  const log = page.getByRole("log");
+  await expect(log).toContainText("Scan completed", { timeout: 5_000 });
+  await expect(page.getByText(/Latest run/)).toBeVisible();
+});
+
+Then("the scan should complete with a different result", async ({ page }) => {
+  const log = page.getByRole("log");
+  await expect(log).toContainText("Scan completed", { timeout: 15_000 });
+  await expect(page.getByText(/Latest run/)).toBeVisible();
+  // A fresh run should emit Lighthouse and skill stages, not instant cache
+  await expect(log).toContainText("LIGHTHOUSE");
 });

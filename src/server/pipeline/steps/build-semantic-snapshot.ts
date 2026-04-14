@@ -9,6 +9,18 @@ function compactLines(values: Array<string | null | undefined>, limit: number) {
     .slice(0, limit);
 }
 
+export function normalizeExtractedText(raw: string): string {
+  return raw
+    .replace(/[\u0000-\u001F\u007F-\u009F]+/g, " ")
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length > 2)
+    .filter((sentence, index, array) => index === 0 || sentence !== array[index - 1])
+    .join(" ")
+    .trim();
+}
+
 export function buildSemanticSnapshot(normalizedUrl: string, pages: PageContentSnapshot[]): SemanticSnapshot {
   const homepage = pages[0];
   const hero = homepage?.heroText ?? homepage?.h1 ?? homepage?.title ?? null;
@@ -42,7 +54,7 @@ export function buildSemanticSnapshot(normalizedUrl: string, pages: PageContentS
         page.testimonials.join(" | "),
         page.navLabels.join(" | "),
         page.footerTrustItems.join(" | "),
-        page.text.slice(0, 2_400),
+        normalizeExtractedText(page.text).slice(0, 2_400),
       ]
         .filter(Boolean)
         .join("\n"),

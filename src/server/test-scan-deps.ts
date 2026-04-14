@@ -2,6 +2,50 @@ import { qualityBandForScore } from "@/lib/shared/scans";
 import type { LighthouseRunResult } from "@/server/lighthouse";
 import { streamOpenAiText } from "@/server/providers/openai/client";
 
+const requestCounts = new Map<string, number>();
+
+export function resetRequestCounts(): void {
+  requestCounts.clear();
+}
+
+function createDefaultMockHtml(url: string): string {
+  return `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>Khan Academy Kids - Free Educational Games</title>
+        <meta name="description" content="A free educational app with thousands of activities, books, and games for children ages 2-8.">
+      </head>
+      <body>
+        <nav><a href="/about">About</a><a href="/parents">Parents</a><a href="/teachers">Teachers</a></nav>
+        <h1>Learning Adventures for Curious Minds</h1>
+        <section>Trusted by teachers. Loved by parents. Built for kids ages 2-8.</section>
+        <section>Download the free app and start learning today.</section>
+        <footer><a href="/privacy">Privacy</a></footer>
+      </body>
+    </html>
+  `;
+}
+
+function createDifferentMockHtml(url: string): string {
+  return `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>Cyberr Talent Network</title>
+        <meta name="description" content="Hire vetted cybersecurity experts for your team.">
+      </head>
+      <body>
+        <nav><a href="/about">About</a><a href="/jobs">Jobs</a><a href="/talent">Talent</a></nav>
+        <h1>Hire Cybersecurity Experts</h1>
+        <section>Vetted professionals only. Ready to join your team.</section>
+        <section>Apply today and join the network.</section>
+        <footer><a href="/privacy">Privacy</a></footer>
+      </body>
+    </html>
+  `;
+}
+
 function createMockFetch(): typeof fetch {
   return async (input) => {
     const url =
@@ -11,22 +55,15 @@ function createMockFetch(): typeof fetch {
           ? input.toString()
           : input.url;
 
-    const html = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Mock Page for ${url}</title>
-          <meta name="description" content="A mock landing page for testing.">
-        </head>
-        <body>
-          <nav><a href="/about">About</a><a href="/pricing">Pricing</a></nav>
-          <h1>Transform Your Workflow</h1>
-          <section>Trusted by 10,000+ teams worldwide.</section>
-          <section>Start your free trial today.</section>
-          <footer><a href="/privacy">Privacy</a></footer>
-        </body>
-      </html>
-    `;
+    const count = (requestCounts.get(url) ?? 0) + 1;
+    requestCounts.set(url, count);
+
+    // For example.org, return different HTML on the second request to simulate a site change
+    // that falls below the 80% similarity threshold, forcing a fresh run.
+    const html =
+      url.includes("example.net") && count > 1
+        ? createDifferentMockHtml(url)
+        : createDefaultMockHtml(url);
 
     return new Response(html, {
       status: 200,
@@ -85,9 +122,29 @@ function createMockLighthouse(): (targetUrl: string) => Promise<LighthouseRunRes
 }
 
 function createMockStreamText(): typeof streamOpenAiText {
-  return async ({ onText }) => {
-    const text =
-      "This landing page sells workflow transformation to busy teams. The hero is clear but proof is thin. Add testimonials and tighten the CTA. tl;dr: more proof, one CTA.";
+  return async ({ system, onText }) => {
+    const isJsonFindings = system.includes("Output valid JSON only");
+
+    const text = isJsonFindings
+      ? JSON.stringify({
+          marketing: {
+            title: "Learning outcome promise buried — age groups and subjects not visible above fold",
+            fix: "Add age range and subject areas directly to the hero headline",
+            severity: "HIGH",
+          },
+          seo: {
+            title: "SEO score indicates meta descriptions missing educational keywords",
+            fix: "Add learning outcomes, age range, and subject keywords to all page meta descriptions",
+            severity: "MEDIUM",
+          },
+          performance: {
+            title: "Performance score leaves mobile speed as conversion risk",
+            fix: "Compress hero images and defer non-critical scripts to improve first paint",
+            severity: "MEDIUM",
+          },
+        })
+      : "Khan Academy Kids has a warm, playful offer for young learners, but the hero buries the specific age range and subjects. Parent trust is implied rather than explicit near the download CTA. Add educator endorsements or COPPA-safe badges closer to the action, and surface a screenshot or short demo so visitors know what the experience looks like before installing. tl;dr: tighten hero specificity, add trust signals near CTA, and show the product.";
+
     await onText(text);
     return {
       text,

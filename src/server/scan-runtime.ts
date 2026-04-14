@@ -1,7 +1,9 @@
 import type {
   FinalRoastPayload,
+  ScanEventType,
   ScanFinding,
   ScanJob,
+  SemanticSnapshot,
 } from "@/lib/shared/scans";
 import { qualityBandForScore } from "@/lib/shared/scans";
 import { runLighthouseAudit, type LighthouseRunResult } from "@/server/lighthouse";
@@ -9,12 +11,14 @@ import { selectPromptPackByScore } from "@/server/pipeline/prompts/score-prompt-
 import { buildSemanticSnapshot, computeSnapshotHash } from "@/server/pipeline/steps/build-semantic-snapshot";
 import { fetchPrimaryPages } from "@/server/pipeline/steps/fetch-primary-pages";
 import { streamFinalSynthesis } from "@/server/pipeline/steps/stream-final-synthesis";
+import { runFindingsSkill } from "@/server/pipeline/skills/findings-skill";
 import { runLighthouseInterpretationSkill } from "@/server/pipeline/skills/lighthouse-interpretation-skill";
 import { runSiteUnderstandingSkill } from "@/server/pipeline/skills/site-understanding-skill";
 import { OpenAiProviderError, streamOpenAiText } from "@/server/providers/openai/client";
 import { analysisCoordinator, scanManager } from "@/server/runtime";
+import type { ScanExecutionContext } from "@/server/scan-manager";
 import { scanRunStore } from "@/server/storage";
-import type { PersistedAnalysisState, PersistedScanArtifacts } from "@/server/storage/types";
+import type { PersistedAnalysisState, PersistedCompletedRun, PersistedScanArtifacts } from "@/server/storage/types";
 
 interface ScanRuntimeDependencies {
   fetchImpl?: typeof fetch;
@@ -28,9 +32,40 @@ function previewRoast(text: string) {
 }
 
 function buildFindings(finalPayload: FinalRoastPayload): ScanFinding[] {
+  if (finalPayload.categoryFindings) {
+    const { marketing, seo, performance } = finalPayload.categoryFindings;
+    return [
+      {
+        code: "MARKETING_1",
+        category: "MARKETING",
+        severity: marketing.severity,
+        title: marketing.title,
+        fix: marketing.fix,
+        roastLine: marketing.fix,
+      },
+      {
+        code: "SEO_1",
+        category: "SEO",
+        severity: seo.severity,
+        title: seo.title,
+        fix: seo.fix,
+        roastLine: seo.fix,
+      },
+      {
+        code: "PERFORMANCE_1",
+        category: "PERFORMANCE",
+        severity: performance.severity,
+        title: performance.title,
+        fix: performance.fix,
+        roastLine: performance.fix,
+      },
+    ];
+  }
+
+  // Fallback for cached payloads without category findings
   const findings: ScanFinding[] = finalPayload.priorityFixes.map((title, index) => ({
     code: `PRIORITY_FIX_${index + 1}`,
-    severity: index === 0 ? "HIGH" : "MEDIUM",
+    severity: index === 0 ? ("HIGH" as const) : ("MEDIUM" as const),
     title,
     roastLine: finalPayload.quickWins0to3Days[index] ?? null,
     fix: finalPayload.quickWins0to3Days[index] ?? null,
@@ -125,10 +160,125 @@ function applyCompletedScan(target: ScanJob, source: ScanJob) {
   target.lighthouseInterpretation = source.lighthouseInterpretation ?? null;
   target.finalPayload = source.finalPayload ?? null;
   target.findings = structuredClone(source.findings);
+  target.cachedFromSnapshotId = source.cachedFromSnapshotId ?? null;
+  target.cachedFromRunAt = source.cachedFromRunAt ?? null;
 }
 
 function failureMessage(error: unknown) {
   return error instanceof Error ? error.message : "Scan failed";
+}
+
+function delay(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+async function simulateCachedScan(
+  scanId: string,
+  cachedRun: PersistedCompletedRun,
+  snapshot: SemanticSnapshot,
+  deps: {
+    appendEvent: ScanExecutionContext["appendEvent"];
+    updateScan: (updater: (scan: ScanJob) => void) => void;
+    getScan: () => ScanJob;
+  },
+) {
+  const { appendEvent, updateScan, getScan } = deps;
+  const sourceScan = cachedRun.scan;
+  const sourcePayload = cachedRun.finalPayload;
+  const analysisId = sourceScan.analysisId ?? sourceScan.id;
+  const originalSnapshotId = sourceScan.snapshotHash ?? "unknown";
+  const originalRunAt = sourceScan.updatedAt ?? sourceScan.createdAt ?? new Date().toISOString();
+
+  const stages: {
+    eventType: ScanEventType;
+    stage: string;
+    message: string;
+    payload?: Record<string, unknown>;
+  }[] = [
+    { eventType: "SCAN_STAGE", stage: "CRAWLING", message: "CRAWL · HOMEPAGE " + snapshot.normalizedUrl },
+    {
+      eventType: "SCAN_STAGE",
+      stage: "QUALITY",
+      message: `LIGHTHOUSE(${sourceScan.providerStatus.lighthouse.source}) · Running mobile profile`,
+      payload: { flushStream: true },
+    },
+    {
+      eventType: "SCAN_STAGE",
+      stage: "QUALITY",
+      message: `LIGHTHOUSE(${sourceScan.providerStatus.lighthouse.source}) · Running desktop profile`,
+      payload: { flushStream: false },
+    },
+    {
+      eventType: "SCAN_STAGE",
+      stage: "QUALITY",
+      message: `LIGHTHOUSE(${sourceScan.providerStatus.lighthouse.source}) · Mobile ${sourceScan.lighthouseProfiles.mobile?.score ?? "n/a"}, Desktop ${sourceScan.lighthouseProfiles.desktop?.score ?? "n/a"}, Combined ${sourceScan.qualityScore}`,
+      payload: { flushStream: true },
+    },
+    { eventType: "SCAN_STAGE", stage: "SITE_SKILL", message: "Summarizing site offer and audience", payload: { flushStream: true } },
+    {
+      eventType: "SCAN_STAGE",
+      stage: "LIGHTHOUSE_SKILL",
+      message: "Translating Lighthouse into conversion risk",
+      payload: { flushStream: true },
+    },
+    {
+      eventType: "SCAN_STAGE",
+      stage: "FINAL_SYNTHESIS",
+      message: `OPENAI(${sourceScan.providerStatus.openai.source}) · Writing final roast`,
+      payload: { flushStream: true },
+    },
+  ];
+
+  for (const stage of stages) {
+    const event = appendEvent(stage.eventType, stage.stage, stage.message, stage.payload);
+    await scanRunStore.appendEvent(event);
+    await delay(400);
+  }
+
+  const fullText = sourcePayload.finalText;
+
+  // Simulate LLM streaming
+  const chunkSize = 12;
+  for (let i = 0; i < fullText.length; i += chunkSize) {
+    const chunk = fullText.slice(i, i + chunkSize);
+    const event = appendEvent("LLM_CHUNK", "FINAL_SYNTHESIS", "Streaming final roast", {
+      textDelta: chunk,
+      field: "finalText",
+    });
+    await scanRunStore.appendEvent(event);
+    await delay(30);
+  }
+
+  const findings = buildFindings(sourcePayload);
+
+  const findingsEvent = appendEvent("FINDINGS_READY", "PERSIST_FINDINGS", "Findings persisted", {
+    count: findings.length,
+    flushStream: true,
+  });
+  await scanRunStore.appendEvent(findingsEvent);
+
+  const doneEvent = appendEvent("JOB_COMPLETED", "COMPLETED", "Scan completed");
+  await scanRunStore.appendEvent(doneEvent);
+
+  updateScan((entry) => {
+    entry.currentStep = "COMPLETED";
+    entry.status = "COMPLETED";
+    entry.finalResponseState = "COMPLETED";
+    entry.previewRoast = previewRoast(fullText);
+    entry.fullRoast = fullText;
+    entry.qualityScore = sourceScan.qualityScore;
+    entry.qualityBand = sourceScan.qualityBand;
+    entry.lighthouseProfiles = structuredClone(sourceScan.lighthouseProfiles);
+    entry.providerStatus = structuredClone(sourceScan.providerStatus);
+    entry.siteUnderstanding = sourceScan.siteUnderstanding ?? null;
+    entry.lighthouseInterpretation = sourceScan.lighthouseInterpretation ?? null;
+    entry.finalPayload = sourcePayload;
+    entry.findings = findings;
+    entry.cachedFromSnapshotId = originalSnapshotId;
+    entry.cachedFromRunAt = originalRunAt;
+    entry.cacheState = "cached";
+  });
+  await persistScan(scanId);
 }
 
 export async function runScanJob(scanId: string, deps: ScanRuntimeDependencies = {}) {
@@ -193,6 +343,7 @@ export async function runScanJob(scanId: string, deps: ScanRuntimeDependencies =
       lastFinalText: "",
       logs: [],
     });
+    await scanRunStore.saveScan(getScan(), { canonicalSummary: snapshot.canonicalSummary });
 
     for (const page of crawl.pages) {
       const event = appendEvent("PAGE_SCANNED", "CRAWLING", "Page scanned", {
@@ -219,12 +370,27 @@ export async function runScanJob(scanId: string, deps: ScanRuntimeDependencies =
         flushStream: true,
       });
       await scanRunStore.appendEvent(cacheEvent);
+      const doneEvent = appendEvent("JOB_COMPLETED", "COMPLETED", "Scan completed");
+      await scanRunStore.appendEvent(doneEvent);
       updateScan((entry) => {
         applyCompletedScan(entry, attached.completedRun.scan);
       });
       await persistScan(scanId);
-      const doneEvent = appendEvent("JOB_COMPLETED", "COMPLETED", "Scan completed");
-      await scanRunStore.appendEvent(doneEvent);
+      return;
+    }
+
+    const similarRun = await scanRunStore.findSimilarCompletedRun(
+      snapshot.normalizedUrl,
+      snapshotHash,
+      snapshot.canonicalSummary,
+    );
+
+    if (similarRun) {
+      const cacheEvent = appendEvent("SCAN_STAGE", "CACHE", "Using similar cached analysis", {
+        flushStream: true,
+      });
+      await scanRunStore.appendEvent(cacheEvent);
+      await simulateCachedScan(scanId, similarRun, snapshot, { appendEvent, updateScan, getScan });
       return;
     }
 
@@ -429,7 +595,17 @@ export async function runScanJob(scanId: string, deps: ScanRuntimeDependencies =
         streamText,
       });
 
-      const finalPayload = synthesis.payload;
+      // Generate category findings (MARKETING / SEO / PERFORMANCE) via LLM
+      const categoryFindings = await runFindingsSkill({
+        snapshot,
+        lighthouseProfiles: state?.lighthouseProfiles ?? { mobile: null, desktop: null },
+        siteUnderstanding,
+        streamText,
+      });
+
+      const finalPayload = categoryFindings
+        ? { ...synthesis.payload, categoryFindings }
+        : synthesis.payload;
       const findings = buildFindings(finalPayload);
 
       state = await analysisCoordinator.updateState(analysisId, (entry) => {

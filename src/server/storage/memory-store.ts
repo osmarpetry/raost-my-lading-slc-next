@@ -5,6 +5,7 @@ import type {
   PersistedScanArtifacts,
   ScanRunStore,
 } from "@/server/storage/types";
+import { computeTextSimilarity } from "@/lib/server/snapshot-similarity";
 
 export class MemoryAnalysisCacheStore implements AnalysisCacheStore {
   private readonly byAnalysisId = new Map<string, PersistedAnalysisState>();
@@ -47,19 +48,30 @@ interface MemoryRunEntry {
 export class MemoryScanRunStore implements ScanRunStore {
   readonly mode = "memory" as const;
   private readonly scans = new Map<string, MemoryRunEntry>();
+  private forceSimilarity: number | null = null;
+
+  setForceSimilarity(value: number | null) {
+    this.forceSimilarity = value;
+  }
 
   async saveScan(scan: PersistedCompletedRun["scan"], artifacts: PersistedScanArtifacts = {}) {
     const current = this.scans.get(scan.id);
+    const scanCanonicalSummary = (scan as unknown as Record<string, string>).canonicalSummary ?? null;
+    const mergedArtifacts = structuredClone({
+      ...(current?.artifacts ?? {}),
+      ...artifacts,
+    });
+    if (!mergedArtifacts.canonicalSummary && scanCanonicalSummary) {
+      mergedArtifacts.canonicalSummary = scanCanonicalSummary;
+    }
     this.scans.set(scan.id, {
       scan: structuredClone({
         ...scan,
         persistedRunId: scan.id,
         persistedState: "persisted",
+        canonicalSummary: mergedArtifacts.canonicalSummary ?? scanCanonicalSummary,
       }),
-      artifacts: structuredClone({
-        ...(current?.artifacts ?? {}),
-        ...artifacts,
-      }),
+      artifacts: mergedArtifacts,
     });
   }
 
@@ -117,7 +129,41 @@ export class MemoryScanRunStore implements ScanRunStore {
     });
   }
 
+  async findSimilarCompletedRun(
+    normalizedUrl: string,
+    snapshotHash: string,
+    canonicalSummary: string,
+    threshold = 0.8,
+  ) {
+    const candidates = [...this.scans.values()]
+      .filter(
+        (entry) =>
+          entry.scan.normalizedUrl === normalizedUrl &&
+          entry.scan.status === "COMPLETED" &&
+          entry.scan.snapshotHash !== snapshotHash &&
+          entry.scan.finalPayload,
+      )
+      .sort((a, b) => (new Date(b.scan.updatedAt ?? 0).getTime() - new Date(a.scan.updatedAt ?? 0).getTime()));
+
+    for (const entry of candidates.slice(0, 20)) {
+      const summary = entry.artifacts.canonicalSummary ?? "";
+      const similarity = this.forceSimilarity !== null
+        ? this.forceSimilarity
+        : computeTextSimilarity(canonicalSummary, summary);
+      if (similarity >= threshold && entry.scan.finalPayload) {
+        return structuredClone({
+          scan: entry.scan,
+          finalPayload: entry.scan.finalPayload,
+          providerStatus: entry.scan.providerStatus,
+        });
+      }
+    }
+
+    return null;
+  }
+
   async clear() {
+    this.forceSimilarity = null;
     this.scans.clear();
   }
 }
@@ -140,6 +186,10 @@ export class UnavailableScanRunStore implements ScanRunStore {
   }
 
   async findCompletedBySnapshotHash() {
+    return null;
+  }
+
+  async findSimilarCompletedRun() {
     return null;
   }
 

@@ -145,18 +145,39 @@ export function describeScanEvent(event: ScanEvent): ScanEventRender {
   }
 }
 
+function formatCachedMessage(scan: ScanJob): string | null {
+  if (!scan.cachedFromSnapshotId || !scan.cachedFromRunAt) {
+    return null;
+  }
+  const date = new Date(scan.cachedFromRunAt);
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const formatted = new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: tz,
+  }).format(date);
+  return `CACHED · This site was previously analyzed on ${formatted} ${tz} (snapshot ${scan.cachedFromSnapshotId}). Simulating LLM and Lighthouse. Returning cached result.`;
+}
+
 export function renderCompletedScan(
   scan: ScanJob,
   options: { includeFullRoast?: boolean } = {},
 ): TerminalLineSeed[] {
   const lines: TerminalLineSeed[] = [];
 
+  const cachedMessage = formatCachedMessage(scan);
+  if (cachedMessage) {
+    lines.push(createTerminalLine("scan", cachedMessage, { tone: "success" }));
+  }
+
   if (scan.previewRoast) {
     lines.push(createTerminalLine("scan", `SUMMARY · ${scan.previewRoast}`, { tone: "success" }));
   }
 
   if ((options.includeFullRoast ?? true) && scan.fullRoast) {
-    lines.push(createTerminalLine("model", scan.fullRoast, { tone: "success" }));
+    for (const roastLine of scan.fullRoast.split("\n")) {
+      lines.push(createTerminalLine("model", roastLine, { tone: "success" }));
+    }
   }
 
   if (scan.qualityScore != null) {
@@ -170,10 +191,11 @@ export function renderCompletedScan(
   }
 
   for (const finding of scan.findings.slice(0, 3)) {
+    const categoryLabel = finding.category ? `[${finding.category}]` : "";
     lines.push(
       createTerminalLine(
         "scan",
-        `FINDING · [${finding.severity}] ${finding.title}${finding.roastLine ? ` · ${finding.roastLine}` : ""}`,
+        `FINDING · ${categoryLabel}[${finding.severity}] ${finding.title}${finding.roastLine ? ` · ${finding.roastLine}` : ""}`,
         { tone: finding.severity === "LOW" ? "muted" : "info" },
       ),
     );
