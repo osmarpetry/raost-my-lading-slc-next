@@ -13,7 +13,7 @@ const CHANNEL_PREFIX: Record<Exclude<TerminalChannel, "prompt">, string> = {
   ws: "[ws]",
   http: "[http]",
   scan: "[scan]",
-  ollama: "[ollama]",
+  model: "[model]",
   error: "[error]",
 };
 
@@ -49,17 +49,17 @@ export function validateTargetUrl(
 ): { ok: true; url: string } | { ok: false; message: string } {
   const trimmed = value.trim();
   if (!trimmed) {
-    return { ok: false, message: "enter a URL before starting the scan" };
+    return { ok: false, message: "enter a URL before starting scan" };
   }
 
   try {
     const url = new URL(trimmed);
     if (!["http:", "https:"].includes(url.protocol)) {
-      return { ok: false, message: "only http and https URLs are supported in this phase" };
+      return { ok: false, message: "only http and https URLs supported" };
     }
     return { ok: true, url: trimmed };
   } catch {
-    return { ok: false, message: "that does not look like a valid absolute URL" };
+    return { ok: false, message: "that is not valid absolute URL" };
   }
 }
 
@@ -82,8 +82,8 @@ export function describeScanEvent(event: ScanEvent): ScanEventRender {
     case "SCAN_STAGE":
       return {
         lines: [
-          createTerminalLine("scan", `${event.stage ?? "UNKNOWN"} · ${event.message}`, {
-            tone: "info",
+          createTerminalLine("scan", event.message, {
+            tone: event.stage === "FAILED" ? "error" : "info",
           }),
         ],
         flushStream: payload?.flushStream === true,
@@ -93,7 +93,7 @@ export function describeScanEvent(event: ScanEvent): ScanEventRender {
         lines: [
           createTerminalLine(
             "scan",
-            `page scanned (${String(payload?.pageKind ?? "UNKNOWN").toLowerCase()}) ${String(payload?.url ?? "unknown url")}`,
+            `CRAWL · ${String(payload?.pageKind ?? "UNKNOWN")} ${String(payload?.url ?? "unknown url")}`,
             { tone: "muted" },
           ),
         ],
@@ -104,7 +104,7 @@ export function describeScanEvent(event: ScanEvent): ScanEventRender {
         lines: [
           createTerminalLine(
             "scan",
-            `external link ${String(payload?.url ?? "unknown target")} loaded=${String(payload?.loaded ?? false)}`,
+            `EXTERNAL · ${String(payload?.url ?? "unknown target")} loaded=${String(payload?.loaded ?? false)}`,
             { tone: "muted" },
           ),
         ],
@@ -113,7 +113,7 @@ export function describeScanEvent(event: ScanEvent): ScanEventRender {
     case "LLM_CHUNK":
       return {
         lines: [],
-        ollamaChunk:
+        modelChunk:
           typeof payload?.textDelta === "string"
             ? payload.textDelta
             : typeof payload?.chunk === "string"
@@ -124,7 +124,7 @@ export function describeScanEvent(event: ScanEvent): ScanEventRender {
     case "FINDINGS_READY":
       return {
         lines: [
-          createTerminalLine("scan", `findings persisted count=${String(payload?.count ?? 0)}`, {
+          createTerminalLine("scan", `ARTIFACTS · persisted ${String(payload?.count ?? 0)} findings`, {
             tone: "success",
           }),
         ],
@@ -152,18 +152,28 @@ export function renderCompletedScan(
   const lines: TerminalLineSeed[] = [];
 
   if (scan.previewRoast) {
-    lines.push(createTerminalLine("scan", `preview · ${scan.previewRoast}`, { tone: "success" }));
+    lines.push(createTerminalLine("scan", `SUMMARY · ${scan.previewRoast}`, { tone: "success" }));
   }
 
   if ((options.includeFullRoast ?? true) && scan.fullRoast) {
-    lines.push(createTerminalLine("ollama", scan.fullRoast, { tone: "success" }));
+    lines.push(createTerminalLine("model", scan.fullRoast, { tone: "success" }));
+  }
+
+  if (scan.qualityScore != null) {
+    lines.push(
+      createTerminalLine(
+        "scan",
+        `SCORE · Mobile ${scan.lighthouseProfiles.mobile?.score ?? "n/a"}, Desktop ${scan.lighthouseProfiles.desktop?.score ?? "n/a"}, Combined ${scan.qualityScore}`,
+        { tone: "success" },
+      ),
+    );
   }
 
   for (const finding of scan.findings.slice(0, 3)) {
     lines.push(
       createTerminalLine(
         "scan",
-        `finding [${finding.severity}] ${finding.title}${finding.roastLine ? ` · ${finding.roastLine}` : ""}`,
+        `FINDING · [${finding.severity}] ${finding.title}${finding.roastLine ? ` · ${finding.roastLine}` : ""}`,
         { tone: finding.severity === "LOW" ? "muted" : "info" },
       ),
     );

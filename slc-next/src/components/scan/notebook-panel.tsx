@@ -14,6 +14,14 @@ interface NotebookPanelProps {
   onReset: () => void;
 }
 
+function providerLabel(scan: ScanJob | null, key: "lighthouse" | "openai") {
+  if (!scan) {
+    return "pending";
+  }
+
+  return scan.providerStatus[key].source;
+}
+
 export function NotebookPanel({
   transportState,
   scanState,
@@ -24,84 +32,130 @@ export function NotebookPanel({
   onSubmit,
   onReset,
 }: NotebookPanelProps) {
-  const topFindings = currentScan?.findings.slice(0, 2) ?? [];
+  const topFindings = currentScan?.findings.slice(0, 3) ?? [];
+  const targetSummary = currentScan?.finalPayload?.whoItTargets.slice(0, 3).join(", ") ?? "";
+  const lastEvents = currentScan?.events.slice(-4).reverse() ?? [];
 
   return (
-    <section className="layout-panel layout-panel--sidebar notebook-panel" aria-label="Notebook content">
+    <section className="layout-panel layout-panel--sidebar notebook-panel" aria-label="Scan control panel">
       <div className="notebook-paper">
-        <div className="notebook-deco-sticker notebook-deco-sticker--roast" aria-hidden="true">
-          <span className="sticker-icon">🔥</span>
-          <span className="sticker-label">
-            ROAST
-            <br />
-            MASTER
-          </span>
-        </div>
-        <div className="notebook-deco-badge" aria-hidden="true">
-          <span className="badge-text">404</span>
-          <span className="badge-sub">AVOIDANCE SQUAD</span>
-        </div>
-        <div className="notebook-deco-mug" aria-hidden="true" />
+        <div className="notebook-scroll">
+          <div className="editorial-header">
+            <p className="kicker">Truthful SLC scan</p>
+            <h1 className="notebook-heading">Real audit. Real roast. Real failure.</h1>
+            <p className="notebook-lede">
+              Lighthouse runs on server. OpenAI writes final prose. If dependency is missing, terminal says so.
+            </p>
+          </div>
 
-        <p className="kicker">SLC / LIVE SSH</p>
-        <h1 className="notebook-heading">PASTE URL. GET ROASTED.</h1>
-        <p className="notebook-lede">Live scan. Brutal honesty. No fake AI theater.</p>
+          <div className="status-row" aria-label="session status">
+            <span className={`status-pill status-pill--${transportState}`}>transport {transportState}</span>
+            <span className={`status-pill status-pill--${scanState}`}>scan {scanState}</span>
+            <span className={`status-pill status-pill--neutral`}>lighthouse {providerLabel(currentScan, "lighthouse")}</span>
+            <span className={`status-pill status-pill--neutral`}>openai {providerLabel(currentScan, "openai")}</span>
+            <span className={`status-pill status-pill--neutral`}>
+              persist {currentScan?.persistedState ?? "pending"}
+            </span>
+          </div>
 
-        <div className="status-row" aria-label="session status">
-          <span className={`status-pill status-pill--${transportState}`}>
-            transport {transportState}
-          </span>
-          <span className={`status-pill status-pill--${scanState}`}>scan {scanState}</span>
-        </div>
+          <UrlForm value={urlInput} disabled={isBusy} onChange={onUrlChange} onSubmit={onSubmit} />
 
-        <UrlForm
-          value={urlInput}
-          disabled={isBusy}
-          onChange={onUrlChange}
-          onSubmit={onSubmit}
-        />
+          <p id="command-help" className="command-help">
+            Submit any public landing page URL. Scan normalizes to site root, crawls bounded routes, runs mobile + desktop Lighthouse, then writes one final roast.
+          </p>
 
-        <p id="command-help" className="command-help">
-          Press Enter or hit start to run the scan against the live endpoint.
-        </p>
+          <div className="flex flex-wrap gap-3">
+            <Button onClick={onSubmit} disabled={isBusy}>
+              {isBusy ? "Scanning..." : "Start Scan"}
+            </Button>
+            <Button tone="ghost" onClick={onReset}>
+              Reset
+            </Button>
+          </div>
 
-        <div className="flex flex-wrap gap-3">
-          <Button onClick={onSubmit} disabled={isBusy}>
-            {isBusy ? "Scanning..." : "Start Roast"}
-          </Button>
-          <Button tone="ghost" onClick={onReset}>
-            Reset
-          </Button>
-        </div>
+          {currentScan ? (
+            <div className="summary-card">
+              <div className="summary-head">
+                <div>
+                  <p className="summary-kicker">Latest run</p>
+                  <p className="summary-id">{currentScan.persistedRunId ?? currentScan.id}</p>
+                </div>
+                {currentScan.qualityScore != null ? (
+                  <p className="summary-score">
+                    {currentScan.qualityScore}
+                    <span>/100</span>
+                  </p>
+                ) : null}
+              </div>
 
-        <p className="notebook-stamp">LESS FLUFF. MORE SIGNAL.</p>
+              <div className="score-grid">
+                <div>
+                  <span className="summary-kicker">mobile</span>
+                  <strong>{currentScan.lighthouseProfiles.mobile?.score ?? "n/a"}</strong>
+                </div>
+                <div>
+                  <span className="summary-kicker">desktop</span>
+                  <strong>{currentScan.lighthouseProfiles.desktop?.score ?? "n/a"}</strong>
+                </div>
+                <div>
+                  <span className="summary-kicker">source</span>
+                  <strong>{currentScan.providerStatus.lighthouse.source}</strong>
+                </div>
+              </div>
 
-        {currentScan ? (
-          <div className="summary-card">
-            <p className="summary-kicker">Latest verdict</p>
-            {currentScan.qualityScore != null ? (
-              <p className="summary-score">
-                {currentScan.qualityScore}/100
-                {currentScan.qualityBand ? ` · ${currentScan.qualityBand}` : ""}
+              {currentScan.finalPayload?.whatSiteSells ? (
+                <p className="summary-copy">
+                  <strong>Sells:</strong> {currentScan.finalPayload.whatSiteSells}
+                </p>
+              ) : null}
+              {targetSummary ? (
+                <p className="summary-copy">
+                  <strong>Targets:</strong> {targetSummary}
+                </p>
+              ) : null}
+              {currentScan.previewRoast ? <p className="summary-copy">{currentScan.previewRoast}</p> : null}
+              {currentScan.errorMessage ? (
+                <p className="summary-copy summary-copy--error">{currentScan.errorMessage}</p>
+              ) : null}
+
+              {topFindings.length > 0 ? (
+                <ul className="summary-list">
+                  {topFindings.map((finding) => (
+                    <li key={finding.code}>
+                      [{finding.severity}] {finding.title}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+
+          {currentScan ? (
+            <div className="artifact-card">
+              <p className="summary-kicker">Artifacts</p>
+              <p className="summary-copy">
+                Debug route: <code>{`/api/scans/${currentScan.id}/artifacts`}</code>
               </p>
-            ) : null}
-            {currentScan.previewRoast ? (
-              <p className="summary-copy">{currentScan.previewRoast}</p>
-            ) : null}
-            {currentScan.errorMessage ? (
-              <p className="summary-copy summary-copy--error">{currentScan.errorMessage}</p>
-            ) : null}
-            {topFindings.length > 0 ? (
+              <p className="summary-copy">
+                Persisted: {currentScan.persistedState ?? "pending"} · Lighthouse {currentScan.providerStatus.lighthouse.source} · OpenAI{" "}
+                {currentScan.providerStatus.openai.source}
+              </p>
+            </div>
+          ) : null}
+
+          {lastEvents.length > 0 ? (
+            <div className="timeline-card">
+              <p className="summary-kicker">What happened</p>
               <ul className="summary-list">
-                {topFindings.map((finding) => (
-                  <li key={finding.code}>
-                    [{finding.severity}] {finding.title}
+                {lastEvents.map((event) => (
+                  <li key={`${event.scanId}-${event.seq}`}>
+                    {event.message}
                   </li>
                 ))}
               </ul>
-            ) : null}
-          </div>
-        ) : null}
+            </div>
+          ) : null}
+        </div>
       </div>
     </section>
   );

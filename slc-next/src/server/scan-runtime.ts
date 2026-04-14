@@ -1,281 +1,25 @@
-import { setTimeout as sleep } from "node:timers/promises";
-
-import { load as loadHtml } from "cheerio";
-
-import type { ScanFinding, ScanJob } from "@/lib/shared/scans";
+import type {
+  FinalRoastPayload,
+  ScanFinding,
+  ScanJob,
+} from "@/lib/shared/scans";
 import { qualityBandForScore } from "@/lib/shared/scans";
-import { runLighthouseAudit } from "@/server/lighthouse";
-import { streamOllamaText } from "@/server/ollama";
-import { scanManager } from "@/server/runtime";
-
-interface PageSummary {
-  pageKind: "HOMEPAGE" | "INTERNAL";
-  url: string;
-  statusCode: number;
-  ok: boolean;
-  contentType: string | null;
-  title: string | null;
-  h1: string | null;
-  wordCount: number;
-  snippet: string | null;
-}
-
-interface ExternalLinkSummary {
-  targetUrl: string;
-  loaded: boolean;
-  finalUrl: string | null;
-  pageTitle: string | null;
-}
-
-interface CrawlResult {
-  pages: PageSummary[];
-  externalLinks: ExternalLinkSummary[];
-}
+import { runLighthouseAudit, type LighthouseRunResult } from "@/server/lighthouse";
+import { selectPromptPackByScore } from "@/server/pipeline/prompts/score-prompt-packs";
+import { buildSemanticSnapshot, computeSnapshotHash } from "@/server/pipeline/steps/build-semantic-snapshot";
+import { fetchPrimaryPages } from "@/server/pipeline/steps/fetch-primary-pages";
+import { streamFinalSynthesis } from "@/server/pipeline/steps/stream-final-synthesis";
+import { runLighthouseInterpretationSkill } from "@/server/pipeline/skills/lighthouse-interpretation-skill";
+import { runSiteUnderstandingSkill } from "@/server/pipeline/skills/site-understanding-skill";
+import { OpenAiProviderError, streamOpenAiText } from "@/server/providers/openai/client";
+import { analysisCoordinator, scanManager } from "@/server/runtime";
+import { scanRunStore } from "@/server/storage";
+import type { PersistedAnalysisState, PersistedScanArtifacts } from "@/server/storage/types";
 
 interface ScanRuntimeDependencies {
   fetchImpl?: typeof fetch;
-  sleepMs?: typeof sleep;
-  runLighthouse?: typeof runLighthouseAudit;
-  streamText?: typeof streamOllamaText;
-}
-
-function cleanText(value: string) {
-  return value.replace(/\s+/g, " ").trim();
-}
-
-function isHtmlContentType(contentType: string | null) {
-  return contentType ? contentType.toLowerCase().includes("text/html") : false;
-}
-
-async function fetchText(url: string, fetchImpl: typeof fetch) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12_000);
-
-  try {
-    const response = await fetchImpl(url, {
-      redirect: "follow",
-      signal: controller.signal,
-      headers: {
-        "user-agent": "slc-next/0.1",
-      },
-    });
-
-    return {
-      finalUrl: response.url,
-      statusCode: response.status,
-      ok: response.ok,
-      contentType: response.headers.get("content-type"),
-      html: await response.text(),
-    };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function extractPage(
-  response: {
-    finalUrl: string;
-    statusCode: number;
-    ok: boolean;
-    contentType: string | null;
-    html: string;
-  },
-  pageKind: "HOMEPAGE" | "INTERNAL",
-): PageSummary {
-  const htmlLike = isHtmlContentType(response.contentType);
-  const $ = loadHtml(htmlLike ? response.html : "");
-  $("script, style, noscript, svg").remove();
-
-  const bodyText = htmlLike ? cleanText($("body").text()) : cleanText(response.html);
-
-  return {
-    url: response.finalUrl,
-    pageKind,
-    statusCode: response.statusCode,
-    ok: response.ok,
-    contentType: response.contentType,
-    title: cleanText($("title").first().text()) || null,
-    h1: cleanText($("h1").first().text()) || null,
-    wordCount: bodyText ? bodyText.split(/\s+/).length : 0,
-    snippet: bodyText ? bodyText.slice(0, 260) : null,
-  };
-}
-
-function collectLinks(html: string, baseUrl: string) {
-  const $ = loadHtml(html);
-  const base = new URL(baseUrl);
-  const internal = new Set<string>();
-  const external = new Set<string>();
-
-  $("a[href]").each((_index, element) => {
-    const href = $(element).attr("href");
-    if (!href) {
-      return;
-    }
-
-    try {
-      const resolved = new URL(href, baseUrl);
-      if (!["http:", "https:"].includes(resolved.protocol)) {
-        return;
-      }
-
-      resolved.hash = "";
-
-      if (resolved.origin === base.origin) {
-        internal.add(resolved.toString());
-      } else {
-        external.add(resolved.toString());
-      }
-    } catch {
-      // ignore malformed hrefs
-    }
-  });
-
-  internal.delete(base.toString());
-
-  return {
-    internal: [...internal],
-    external: [...external],
-  };
-}
-
-async function inspectExternalLink(url: string, fetchImpl: typeof fetch): Promise<ExternalLinkSummary> {
-  try {
-    const response = await fetchImpl(url, {
-      redirect: "follow",
-      headers: {
-        "user-agent": "slc-next/0.1",
-      },
-    });
-
-    const body = response.ok ? await response.text() : "";
-    const $ = loadHtml(body);
-
-    return {
-      targetUrl: url,
-      loaded: response.ok,
-      finalUrl: response.url,
-      pageTitle: cleanText($("title").first().text()) || null,
-    };
-  } catch {
-    return {
-      targetUrl: url,
-      loaded: false,
-      finalUrl: null,
-      pageTitle: null,
-    };
-  }
-}
-
-async function crawlSite(
-  normalizedUrl: string,
-  fetchImpl: typeof fetch,
-): Promise<CrawlResult> {
-  const homepageResponse = await fetchText(normalizedUrl, fetchImpl);
-  const homepage = extractPage(homepageResponse, "HOMEPAGE");
-  const links = isHtmlContentType(homepageResponse.contentType)
-    ? collectLinks(homepageResponse.html, homepageResponse.finalUrl)
-    : { internal: [], external: [] };
-
-  const internalPages: PageSummary[] = [];
-  for (const url of links.internal.slice(0, 1)) {
-    try {
-      const response = await fetchText(url, fetchImpl);
-      internalPages.push(extractPage(response, "INTERNAL"));
-    } catch {
-      // skip unreachable internal pages
-    }
-  }
-
-  const externalLinks: ExternalLinkSummary[] = [];
-  for (const url of links.external.slice(0, 2)) {
-    externalLinks.push(await inspectExternalLink(url, fetchImpl));
-  }
-
-  return {
-    pages: [homepage, ...internalPages],
-    externalLinks,
-  };
-}
-
-function buildFindings(scan: ScanJob, crawl: CrawlResult, score: number): ScanFinding[] {
-  const homepage = crawl.pages[0];
-  const findings: ScanFinding[] = [];
-
-  if (homepage && !homepage.ok) {
-    findings.push({
-      code: "HOMEPAGE_STATUS",
-      severity: homepage.statusCode >= 500 ? "CRITICAL" : "HIGH",
-      title: `Homepage responds with HTTP ${homepage.statusCode}`,
-      roastLine: `The target URL is reachable, but it is serving an error response instead of a usable landing page.`,
-      fix: "Restore a valid HTML response at the submitted URL before trusting any conversion analysis.",
-    });
-  }
-
-  if (!homepage?.h1) {
-    findings.push({
-      code: "H1_MISSING",
-      severity: "HIGH",
-      title: "Headline does not anchor the promise",
-      roastLine: "The hero makes the visitor do the translation work.",
-      fix: "Lead with one concrete payoff in the first heading.",
-    });
-  }
-
-  if ((homepage?.wordCount ?? 0) < 120) {
-    findings.push({
-      code: "TOO_THIN",
-      severity: "MEDIUM",
-      title: "Homepage signal is too thin",
-      roastLine: "There is not enough substance above the fold to justify trust.",
-      fix: "Add clearer proof, product specifics, or examples before the first scroll.",
-    });
-  }
-
-  if (crawl.externalLinks.every((link) => !link.loaded)) {
-    findings.push({
-      code: "PROOF_WEAK",
-      severity: "HIGH",
-      title: "Credibility links are weak or missing",
-      roastLine: "Trust is claimed, not demonstrated.",
-      fix: "Show accessible proof links, case studies, or third-party validation.",
-    });
-  }
-
-  findings.push({
-    code: "QUALITY_SCORE",
-    severity: score >= 70 ? "LOW" : "MEDIUM",
-    title: "Quality score needs stronger polish",
-    roastLine: `Current score lands at ${score}/100. The page is serviceable but still leaks confidence.`,
-    fix: "Tighten copy, hierarchy, and trust cues before increasing acquisition spend.",
-  });
-
-  return findings.slice(0, 4);
-}
-
-function buildTemplateSignals(crawl: CrawlResult) {
-  const homepage = crawl.pages[0];
-  return [
-    homepage ? `Homepage HTTP status: ${homepage.statusCode}` : "Homepage HTTP status unknown",
-    homepage?.contentType ? `Content type: ${homepage.contentType}` : "Content type unknown",
-    homepage?.title ? `Title present: ${homepage.title}` : "Title missing",
-    homepage?.h1 ? `Headline present: ${homepage.h1}` : "Headline missing",
-    `Word count: ${homepage?.wordCount ?? 0}`,
-    `External proof links loaded: ${crawl.externalLinks.filter((entry) => entry.loaded).length}/${crawl.externalLinks.length}`,
-  ].join(". ");
-}
-
-function buildFinalVerdict(scan: ScanJob, crawl: CrawlResult, score: number) {
-  const homepage = crawl.pages[0];
-  const band = qualityBandForScore(score);
-  const title = homepage?.title ?? "Untitled page";
-  const headline = homepage?.h1 ?? "No clear headline";
-
-  if (homepage && !homepage.ok) {
-    return `The submitted URL is returning HTTP ${homepage.statusCode}, so the landing page is failing before the pitch even begins. Right now the strongest signal is operational breakage, not positioning. Fix the response at ${homepage.url}, make sure it serves a real HTML page, then rerun the scan for meaningful conversion feedback.`;
-  }
-
-  return `${title} is landing in ${band.toLowerCase()} territory at ${score}/100. The page opens with "${headline}", but the promise still needs sharper payoff and faster proof. Tighten the headline, move concrete evidence higher, and cut any copy that asks the visitor to infer the value on their own.`;
+  runLighthouse?: (targetUrl: string) => Promise<LighthouseRunResult>;
+  streamText?: typeof streamOpenAiText;
 }
 
 function previewRoast(text: string) {
@@ -283,120 +27,490 @@ function previewRoast(text: string) {
   return sentence.length > 160 ? `${sentence.slice(0, 157)}...` : sentence;
 }
 
-async function appendChunkEvent(
-  scanId: string,
-  text: string,
-  extraPayload: Record<string, unknown> = {},
-) {
-  scanManager.appendEvent(scanId, "LLM_CHUNK", "OLLAMA", "Streaming roast text", {
-    ...extraPayload,
-    textDelta: text,
-  });
+function buildFindings(finalPayload: FinalRoastPayload): ScanFinding[] {
+  const findings: ScanFinding[] = finalPayload.priorityFixes.map((title, index) => ({
+    code: `PRIORITY_FIX_${index + 1}`,
+    severity: index === 0 ? "HIGH" : "MEDIUM",
+    title,
+    roastLine: finalPayload.quickWins0to3Days[index] ?? null,
+    fix: finalPayload.quickWins0to3Days[index] ?? null,
+  }));
+
+  for (const compliment of finalPayload.compliments) {
+    findings.push({
+      code: `COMPLIMENT_${findings.length + 1}`,
+      severity: "LOW",
+      title: compliment,
+      roastLine: compliment,
+    });
+  }
+
+  return findings.slice(0, 4);
 }
 
-export async function runScanJob(
-  scanId: string,
-  deps: ScanRuntimeDependencies = {},
+function buildArtifacts(state: PersistedAnalysisState | null | undefined): PersistedScanArtifacts {
+  return {
+    routeMapJson: state?.routeMap ?? null,
+    pagesJson: state?.pages ?? null,
+    externalLinksJson: state?.externalLinks ?? null,
+    lighthouseMobileJson: state?.lighthouseRaw?.mobile ?? null,
+    lighthouseDesktopJson: state?.lighthouseRaw?.desktop ?? null,
+    siteUnderstandingJson: state?.siteUnderstanding ?? null,
+    finalPayloadJson: state?.finalPayload ?? null,
+  };
+}
+
+async function persistScan(scanId: string, state?: PersistedAnalysisState | null) {
+  const snapshot = scanManager.getScan(scanId);
+  if (!snapshot) {
+    return;
+  }
+
+  const effectiveState =
+    state ?? (snapshot.analysisId ? analysisCoordinator.getState(snapshot.analysisId) : null);
+  await scanRunStore.saveScan(snapshot, buildArtifacts(effectiveState));
+}
+
+async function appendEventToScans(
+  scanIds: string[],
+  eventType: Parameters<typeof scanManager.appendEvent>[1],
+  stage: string,
+  message: string,
+  payload?: Parameters<typeof scanManager.appendEvent>[4],
+  state?: PersistedAnalysisState | null,
 ) {
+  for (const scanId of scanIds) {
+    if (!scanManager.hasScan(scanId)) {
+      continue;
+    }
+
+    const event = scanManager.appendEvent(scanId, eventType, stage, message, payload);
+    await scanRunStore.appendEvent(event);
+    await persistScan(scanId, state);
+  }
+}
+
+async function updateScans(
+  scanIds: string[],
+  updater: (scan: ScanJob) => void,
+  state?: PersistedAnalysisState | null,
+) {
+  for (const scanId of scanIds) {
+    if (!scanManager.hasScan(scanId)) {
+      continue;
+    }
+
+    scanManager.updateScan(scanId, updater);
+    await persistScan(scanId, state);
+  }
+}
+
+function applyCompletedScan(target: ScanJob, source: ScanJob) {
+  target.persistedRunId = source.persistedRunId ?? source.id;
+  target.persistedState = source.persistedState ?? "persisted";
+  target.rootUrl = source.rootUrl ?? null;
+  target.snapshotHash = source.snapshotHash ?? null;
+  target.cacheState = "cached";
+  target.currentStep = "COMPLETED";
+  target.finalResponseState = "COMPLETED";
+  target.status = "COMPLETED";
+  target.errorMessage = source.errorMessage ?? null;
+  target.previewRoast = source.previewRoast ?? null;
+  target.fullRoast = source.fullRoast ?? null;
+  target.qualityScore = source.qualityScore ?? null;
+  target.qualityBand = source.qualityBand ?? null;
+  target.providerStatus = structuredClone(source.providerStatus);
+  target.lighthouseProfiles = structuredClone(source.lighthouseProfiles);
+  target.siteUnderstanding = source.siteUnderstanding ?? null;
+  target.lighthouseInterpretation = source.lighthouseInterpretation ?? null;
+  target.finalPayload = source.finalPayload ?? null;
+  target.findings = structuredClone(source.findings);
+}
+
+function failureMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Scan failed";
+}
+
+export async function runScanJob(scanId: string, deps: ScanRuntimeDependencies = {}) {
   const fetchImpl = deps.fetchImpl ?? fetch;
-  const pause = deps.sleepMs ?? sleep;
   const runLighthouse = deps.runLighthouse ?? runLighthouseAudit;
-  const streamText = deps.streamText ?? streamOllamaText;
+  const streamText = deps.streamText ?? streamOpenAiText;
 
   await scanManager.runScan(scanId, async ({ appendEvent, getScan, updateScan }) => {
-    const scan = getScan();
-    appendEvent("SCAN_STAGE", "RUNNING", "Scan started");
-    appendEvent("SCAN_STAGE", "CRAWLING", "Fetching homepage and links");
+    const initialScan = getScan();
+    const persistenceReason = scanRunStore.mode === "unavailable" ? scanRunStore.reason : null;
 
-    const crawl = await crawlSite(scan.normalizedUrl ?? scan.url ?? "", fetchImpl);
+    if (persistenceReason) {
+      updateScan((entry) => {
+        entry.persistedState = "unavailable";
+        entry.persistedRunId = null;
+        entry.currentStep = "PERSISTENCE_FAILED";
+        entry.errorMessage = persistenceReason;
+      });
+      appendEvent("SCAN_STAGE", "PERSISTENCE", `POSTGRES(unavailable) · ${persistenceReason}`, {
+        flushStream: true,
+      });
+      appendEvent("JOB_FAILED", "FAILED", `SCAN FAILED · ${persistenceReason}`, {
+        error: persistenceReason,
+        flushStream: true,
+      });
+      return;
+    }
+
+    updateScan((entry) => {
+      entry.persistedRunId = entry.id;
+      entry.persistedState = "persisted";
+    });
+    await persistScan(scanId);
+
+    const startedEvent = appendEvent("SCAN_STAGE", "RUNNING", "Scan started");
+    await scanRunStore.appendEvent(startedEvent);
+    await persistScan(scanId);
+
+    const routeMapEvent = appendEvent("SCAN_STAGE", "ROUTE_MAP", "Building route map");
+    await scanRunStore.appendEvent(routeMapEvent);
+
+    const crawl = await fetchPrimaryPages(initialScan.normalizedUrl ?? initialScan.url ?? "", fetchImpl);
+    const snapshot = buildSemanticSnapshot(crawl.rootUrl, crawl.pages);
+    const snapshotHash = computeSnapshotHash(snapshot);
+
+    updateScan((entry) => {
+      entry.rootUrl = crawl.rootUrl;
+      entry.snapshotHash = snapshotHash;
+      entry.currentStep = "SNAPSHOT_READY";
+    });
+    await persistScan(scanId, {
+      analysisId: "",
+      snapshotHash,
+      normalizedUrl: snapshot.normalizedUrl,
+      rootUrl: crawl.rootUrl,
+      routeMap: crawl.routeMap,
+      pages: crawl.pages,
+      externalLinks: crawl.externalLinks,
+      status: "RUNNING",
+      currentStep: "SNAPSHOT_READY",
+      finalChunks: [],
+      lastFinalText: "",
+      logs: [],
+    });
 
     for (const page of crawl.pages) {
-      appendEvent("PAGE_SCANNED", "CRAWLING", "Page scanned", {
+      const event = appendEvent("PAGE_SCANNED", "CRAWLING", "Page scanned", {
         url: page.url,
         pageKind: page.pageKind,
         statusCode: page.statusCode,
         ok: page.ok,
       });
+      await scanRunStore.appendEvent(event);
     }
 
-    for (const link of crawl.externalLinks) {
-      appendEvent("EXTERNAL_LINK_CHECKED", "CRAWLING", "External link inspected", {
-        url: link.targetUrl,
-        loaded: link.loaded,
-      });
-    }
-
-    appendEvent("SCAN_STAGE", "QUALITY", "Running Lighthouse", {
-      flushStream: true,
-    });
-    const quality = await runLighthouse(scan.normalizedUrl ?? scan.url ?? "");
-    appendEvent("SCAN_STAGE", "QUALITY", `Score ${quality.score}/100 (${quality.band})`, {
-      flushStream: true,
+    const attached = await analysisCoordinator.attachOrCreate({
+      scanId,
+      snapshotHash,
+      normalizedUrl: snapshot.normalizedUrl,
+      rootUrl: crawl.rootUrl,
+      routeMap: crawl.routeMap,
+      pages: crawl.pages,
+      externalLinks: crawl.externalLinks,
     });
 
-    for (let index = 0; index < crawl.externalLinks.length; index += 1) {
-      const link = crawl.externalLinks[index];
-      appendEvent("SCAN_STAGE", "OLLAMA", `Checking link ${index + 1}/${crawl.externalLinks.length}`, {
+    if ("completedRun" in attached && attached.completedRun) {
+      const cacheEvent = appendEvent("SCAN_STAGE", "CACHE", "Using cached analysis", {
         flushStream: true,
       });
-
-      const fallback = link.loaded
-        ? `Link ${index + 1} looks reachable and contributes some trust, but it still needs clearer context from the landing page.`
-        : `Link ${index + 1} does not resolve cleanly. That is a trust leak visitors can feel immediately.`;
-
-      await streamText({
-        prompt: `Review the trust signal for ${link.targetUrl} from ${scan.normalizedUrl}.`,
-        fallback,
-        onText: (chunk) => appendChunkEvent(scan.id, chunk, { field: "analysis" }),
-        fetchImpl,
+      await scanRunStore.appendEvent(cacheEvent);
+      updateScan((entry) => {
+        applyCompletedScan(entry, attached.completedRun.scan);
       });
+      await persistScan(scanId);
+      const doneEvent = appendEvent("JOB_COMPLETED", "COMPLETED", "Scan completed");
+      await scanRunStore.appendEvent(doneEvent);
+      return;
     }
 
-    appendEvent("SCAN_STAGE", "OLLAMA", "Checking template signals", {
-      flushStream: true,
-    });
-
-    await streamText({
-      prompt: `Summarize the landing page template signals for ${scan.normalizedUrl}. ${buildTemplateSignals(crawl)}`,
-      fallback: buildTemplateSignals(crawl),
-      onText: (chunk) => appendChunkEvent(scan.id, chunk, { field: "analysis" }),
-      fetchImpl,
-    });
-
-    const verdict = buildFinalVerdict(scan, crawl, quality.score);
-    appendEvent("SCAN_STAGE", "OLLAMA", "Writing final verdict", {
-      flushStream: true,
-    });
-
-    await streamText({
-      prompt: `Write a direct landing page verdict for ${scan.normalizedUrl}.`,
-      fallback: verdict,
-      onText: (chunk) =>
-        appendChunkEvent(scan.id, chunk, {
-          field: "finalVerdict",
-          step: "finalVerdict",
-          band: quality.band,
-        }),
-      fetchImpl,
-    });
-
-    const findings = buildFindings(scan, crawl, quality.score);
-
+    const active = attached.active;
+    const analysisId = active.state.analysisId;
     updateScan((entry) => {
-      entry.previewRoast = previewRoast(verdict);
-      entry.fullRoast = verdict;
-      entry.qualityScore = quality.score;
-      entry.qualityBand = quality.band;
-      entry.lighthouse = quality.lighthouse;
-      entry.findings = findings;
+      entry.analysisId = analysisId;
+      entry.cacheState = attached.cacheState;
+      entry.currentStep = active.state.currentStep;
     });
+    await persistScan(scanId, active.state);
 
-    appendEvent("FINDINGS_READY", "PERSIST_FINDINGS", "Findings persisted", {
-      count: findings.length,
-      flushStream: true,
-    });
+    if (!attached.shouldStart) {
+      const attachedEvent = appendEvent("SCAN_STAGE", "ATTACHED", "Attached to shared analysis", {
+        flushStream: true,
+      });
+      await scanRunStore.appendEvent(attachedEvent);
+      updateScan((entry) => {
+        entry.status = "RUNNING";
+      });
+      await persistScan(scanId, active.state);
+      return;
+    }
 
-    await pause(40);
-    appendEvent("JOB_COMPLETED", "COMPLETED", "Scan completed");
+    analysisCoordinator.markRunning(analysisId, true);
+
+    try {
+      await analysisCoordinator.updateState(analysisId, (state) => {
+        state.currentStep = "PAGES_FETCHED";
+        state.status = "RUNNING";
+      });
+
+      let state = analysisCoordinator.getState(analysisId);
+
+      if (!state?.lighthouseProfiles?.mobile || !state?.lighthouseProfiles?.desktop) {
+        await appendEventToScans(
+          analysisCoordinator.getAttachedScanIds(analysisId),
+          "SCAN_STAGE",
+          "QUALITY",
+          `LIGHTHOUSE(${initialScan.providerStatus?.lighthouse.source ?? "local"}) · Running mobile profile`,
+          { flushStream: true },
+        );
+        await appendEventToScans(
+          analysisCoordinator.getAttachedScanIds(analysisId),
+          "SCAN_STAGE",
+          "QUALITY",
+          `LIGHTHOUSE(${initialScan.providerStatus?.lighthouse.source ?? "local"}) · Running desktop profile`,
+          { flushStream: false },
+        );
+
+        const lighthouse = await runLighthouse(snapshot.normalizedUrl);
+        state = await analysisCoordinator.updateState(analysisId, (entry) => {
+          entry.currentStep = "LIGHTHOUSE_DONE";
+          entry.lighthouseProfiles = lighthouse.profiles;
+          entry.lighthouseRaw = lighthouse.raw;
+          entry.status = "RUNNING";
+        });
+
+        await updateScans(
+          analysisCoordinator.getAttachedScanIds(analysisId),
+          (entry) => {
+            entry.currentStep = "LIGHTHOUSE_DONE";
+            entry.qualityScore = lighthouse.qualityScore;
+            entry.qualityBand = lighthouse.qualityBand;
+            entry.lighthouseProfiles = lighthouse.profiles;
+            entry.providerStatus.lighthouse = lighthouse.status;
+          },
+          state,
+        );
+
+        await appendEventToScans(
+          analysisCoordinator.getAttachedScanIds(analysisId),
+          "SCAN_STAGE",
+          "QUALITY",
+          `LIGHTHOUSE(${lighthouse.status.source}) · Mobile ${lighthouse.profiles.mobile?.score ?? "n/a"}, Desktop ${lighthouse.profiles.desktop?.score ?? "n/a"}, Combined ${lighthouse.qualityScore}`,
+          { flushStream: true },
+        );
+      }
+
+      state = analysisCoordinator.getState(analysisId);
+      const qualityScore =
+        state?.lighthouseProfiles?.mobile && state.lighthouseProfiles.desktop
+          ? Math.round(
+              (state.lighthouseProfiles.mobile.score + state.lighthouseProfiles.desktop.score) / 2,
+            )
+          : 0;
+
+      if (!state?.siteUnderstanding) {
+        await appendEventToScans(
+          analysisCoordinator.getAttachedScanIds(analysisId),
+          "SCAN_STAGE",
+          "SITE_SKILL",
+          "Summarizing site offer and audience",
+          { flushStream: true },
+        );
+        const siteSkill = await runSiteUnderstandingSkill(snapshot, state?.lighthouseProfiles ?? {
+          mobile: null,
+          desktop: null,
+        });
+        state = await analysisCoordinator.updateState(analysisId, (entry) => {
+          entry.currentStep = "SITE_UNDERSTANDING_DONE";
+          entry.siteUnderstanding = siteSkill.output;
+        });
+        await updateScans(
+          analysisCoordinator.getAttachedScanIds(analysisId),
+          (entry) => {
+            entry.currentStep = "SITE_UNDERSTANDING_DONE";
+            entry.siteUnderstanding = siteSkill.output;
+          },
+          state,
+        );
+      }
+
+      if (!state?.lighthouseInterpretation) {
+        await appendEventToScans(
+          analysisCoordinator.getAttachedScanIds(analysisId),
+          "SCAN_STAGE",
+          "LIGHTHOUSE_SKILL",
+          "Translating Lighthouse into conversion risk",
+          { flushStream: true },
+        );
+        const interpretation = await runLighthouseInterpretationSkill(
+          qualityScore,
+          state?.lighthouseProfiles ?? {
+            mobile: null,
+            desktop: null,
+          },
+        );
+        state = await analysisCoordinator.updateState(analysisId, (entry) => {
+          entry.currentStep = "LIGHTHOUSE_INTERPRETATION_DONE";
+          entry.lighthouseInterpretation = interpretation.output;
+        });
+        await updateScans(
+          analysisCoordinator.getAttachedScanIds(analysisId),
+          (entry) => {
+            entry.currentStep = "LIGHTHOUSE_INTERPRETATION_DONE";
+            entry.lighthouseInterpretation = interpretation.output;
+          },
+          state,
+        );
+      }
+
+      const promptPack = selectPromptPackByScore(qualityScore);
+      state = await analysisCoordinator.updateState(analysisId, (entry) => {
+        entry.promptPackId = promptPack.id;
+        entry.currentStep = "PROMPT_PACK_SELECTED";
+      });
+      await updateScans(
+        analysisCoordinator.getAttachedScanIds(analysisId),
+        (entry) => {
+          entry.currentStep = "PROMPT_PACK_SELECTED";
+        },
+        state,
+      );
+
+      await appendEventToScans(
+        analysisCoordinator.getAttachedScanIds(analysisId),
+        "SCAN_STAGE",
+        "FINAL_SYNTHESIS",
+        `OPENAI(${process.env.OPENAI_API_KEY ? "live" : "disabled"}) · Writing final roast`,
+        { flushStream: true },
+      );
+
+      const siteUnderstanding = state?.siteUnderstanding;
+      const lighthouseInterpretation = state?.lighthouseInterpretation;
+      if (!siteUnderstanding || !lighthouseInterpretation) {
+        throw new Error("Missing required analysis state for final synthesis");
+      }
+
+      const synthesis = await streamFinalSynthesis({
+        snapshotHash,
+        promptPack,
+        snapshot,
+        siteUnderstanding,
+        lighthouseInterpretation,
+        onText: async (chunk) => {
+          const updated = await analysisCoordinator.updateState(analysisId, (entry) => {
+            entry.currentStep = "FINAL_SYNTHESIS_STREAMING";
+            entry.finalChunks.push(chunk);
+            entry.lastFinalText = `${entry.lastFinalText}${chunk}`;
+          });
+
+          await appendEventToScans(
+            analysisCoordinator.getAttachedScanIds(analysisId),
+            "LLM_CHUNK",
+            "FINAL_SYNTHESIS",
+            "Streaming final roast",
+            {
+              textDelta: chunk,
+              field: "finalText",
+            },
+          );
+
+          await updateScans(
+            analysisCoordinator.getAttachedScanIds(analysisId),
+            (entry) => {
+              entry.currentStep = "FINAL_SYNTHESIS_STREAMING";
+            },
+            updated,
+          );
+        },
+        streamText,
+      });
+
+      const finalPayload = synthesis.payload;
+      const findings = buildFindings(finalPayload);
+
+      state = await analysisCoordinator.updateState(analysisId, (entry) => {
+        entry.currentStep = "FINAL_SYNTHESIS_DONE";
+        entry.mergedPrompt = synthesis.mergedPrompt;
+        entry.finalPayload = finalPayload;
+        entry.lastFinalText = finalPayload.finalText;
+        entry.status = "COMPLETED";
+      });
+
+      await updateScans(
+        analysisCoordinator.getAttachedScanIds(analysisId),
+        (entry) => {
+          entry.currentStep = "COMPLETED";
+          entry.previewRoast = previewRoast(finalPayload.finalText);
+          entry.fullRoast = finalPayload.finalText;
+          entry.finalPayload = finalPayload;
+          entry.finalResponseState = "COMPLETED";
+          entry.qualityScore = qualityScore;
+          entry.qualityBand = qualityBandForScore(qualityScore);
+          entry.findings = findings;
+          entry.providerStatus.openai = synthesis.status;
+        },
+        state,
+      );
+
+      await appendEventToScans(
+        analysisCoordinator.getAttachedScanIds(analysisId),
+        "FINDINGS_READY",
+        "PERSIST_FINDINGS",
+        "Findings persisted",
+        { count: findings.length, flushStream: true },
+      );
+
+      await analysisCoordinator.completeAnalysis(analysisId);
+
+      await appendEventToScans(
+        analysisCoordinator.getAttachedScanIds(analysisId),
+        "JOB_COMPLETED",
+        "COMPLETED",
+        "Scan completed",
+      );
+    } catch (error) {
+      const message = failureMessage(error);
+      const updated = await analysisCoordinator.updateState(analysisId, (state) => {
+        state.status = "FAILED";
+        state.currentStep = "FAILED";
+      });
+
+      await updateScans(
+        analysisCoordinator.getAttachedScanIds(analysisId),
+        (entry) => {
+          entry.currentStep = "FAILED";
+          entry.errorMessage = message;
+          entry.finalResponseState = "FAILED";
+
+          if (error instanceof OpenAiProviderError) {
+            entry.providerStatus.openai = error.status;
+          }
+
+          if (error instanceof Error && "status" in error) {
+            const statusCarrier = error as Error & {
+              status?: ScanJob["providerStatus"]["lighthouse"];
+            };
+            if (statusCarrier.status?.provider === "lighthouse") {
+              entry.providerStatus.lighthouse = statusCarrier.status;
+            }
+          }
+        },
+        updated,
+      );
+
+      await appendEventToScans(
+        analysisCoordinator.getAttachedScanIds(analysisId),
+        "JOB_FAILED",
+        "FAILED",
+        `SCAN FAILED · ${message}`,
+        { error: message, flushStream: true },
+      );
+    } finally {
+      analysisCoordinator.markRunning(analysisId, false);
+    }
   });
 }

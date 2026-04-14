@@ -12,6 +12,7 @@ import type {
 interface CreateScanInput {
   url: string;
   normalizedUrl: string;
+  clientSessionId?: string;
 }
 
 export interface ScanExecutionContext {
@@ -48,15 +49,45 @@ export class ScanManager {
     const scanId = randomUUID();
     const scan: MutableScanJob = {
       id: scanId,
+      persistedRunId: null,
+      persistedState: "pending",
       url: input.url,
       normalizedUrl: input.normalizedUrl,
+      rootUrl: null,
+      clientSessionId: input.clientSessionId,
       status: "QUEUED",
       errorMessage: null,
       previewRoast: null,
       fullRoast: null,
+      finalPayload: null,
+      finalResponseState: "RUNNING",
+      analysisId: null,
+      snapshotHash: null,
+      cacheState: null,
+      currentStep: "QUEUED",
+      providerStatus: {
+        lighthouse: {
+          provider: "lighthouse",
+          source: "disabled",
+          reason: "Lighthouse not started",
+          latencyMs: null,
+        },
+        openai: {
+          provider: "openai",
+          source: "disabled",
+          reason: "OpenAI not started",
+          model: null,
+          latencyMs: null,
+        },
+      },
+      siteUnderstanding: null,
+      lighthouseInterpretation: null,
       qualityScore: null,
       qualityBand: null,
-      lighthouse: null,
+      lighthouseProfiles: {
+        mobile: null,
+        desktop: null,
+      },
       findings: [],
       events: [],
       createdAt: now,
@@ -116,11 +147,13 @@ export class ScanManager {
 
     if (eventType === "JOB_COMPLETED") {
       scan.status = "COMPLETED";
+      scan.finalResponseState = "COMPLETED";
     }
 
     if (eventType === "JOB_FAILED" || eventType === "JOB_CANCELLED") {
       scan.status = "FAILED";
       scan.errorMessage = message;
+      scan.finalResponseState = "FAILED";
     }
 
     const event: ScanEvent = {
@@ -192,6 +225,20 @@ export class ScanManager {
   clear() {
     this.scans.clear();
     this.activeScans.clear();
+  }
+
+  cancelScan(scanId: string, message = "Scan cancelled") {
+    if (!this.scans.has(scanId)) {
+      return undefined;
+    }
+
+    this.updateScan(scanId, (scan) => {
+      scan.errorMessage = message;
+      scan.finalResponseState = "PAUSED";
+    });
+    return this.appendEvent(scanId, "JOB_CANCELLED", "CANCELLED", message, {
+      error: message,
+    });
   }
 
   private requireScan(scanId: string) {

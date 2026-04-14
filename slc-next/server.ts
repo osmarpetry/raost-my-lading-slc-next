@@ -1,3 +1,5 @@
+import "dotenv/config";
+
 import { createAppServer } from "./src/server/bootstrap";
 
 async function main() {

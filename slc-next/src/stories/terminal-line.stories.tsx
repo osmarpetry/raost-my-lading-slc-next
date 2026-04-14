@@ -24,12 +24,12 @@ export const Scan: Story = {
   },
 };
 
-export const Ollama: Story = {
+export const Model: Story = {
   args: {
     line: {
       id: "line-2",
-      channel: "ollama",
-      prefix: "[ollama]",
+      channel: "model",
+      prefix: "[model]",
       text: "The headline is clean, but the proof section still drags.",
       tone: "success",
       streaming: true,

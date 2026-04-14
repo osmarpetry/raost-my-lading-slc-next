@@ -5,11 +5,11 @@ export function createBootSequence(apiBasePath: string): TerminalLineSeed[] {
   return [
     {
       channel: "prompt",
-      text: "roast@landing:~$ boot local-runtime",
+      text: "slc@truth:~$ boot scan-runtime",
       tone: "muted",
       prompt: true,
     },
-    createTerminalLine("system", "bootstrapping local scan runtime", { tone: "muted" }),
+    createTerminalLine("system", "booting truthful scan runtime", { tone: "muted" }),
     createTerminalLine("system", `loading server routes at ${apiBasePath}`, {
       tone: "muted",
     }),
@@ -18,8 +18,8 @@ export function createBootSequence(apiBasePath: string): TerminalLineSeed[] {
 
 export function createReadyLines(): TerminalLineSeed[] {
   return [
-    createTerminalLine("system", "local scan runtime ready", { tone: "success" }),
-    createTerminalLine("system", "websocket live stream armed with polling fallback", {
+    createTerminalLine("system", "truthful scan runtime ready", { tone: "success" }),
+    createTerminalLine("system", "websocket live stream active with HTTP recovery", {
       tone: "muted",
     }),
   ];
@@ -28,7 +28,7 @@ export function createReadyLines(): TerminalLineSeed[] {
 export function createPromptLine(): TerminalLineSeed {
   return {
     channel: "prompt",
-    text: "roast@landing:~$ _",
+    text: "slc@truth:~$ _",
     tone: "info",
     prompt: true,
   };

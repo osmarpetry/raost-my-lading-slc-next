@@ -4,7 +4,9 @@
 # next
 /.next
 /.next-test*
+/.next-real-e2e
 /tsconfig.next-test*.json
+/tsconfig.real-e2e.json
 /out
 
 # local env

@@ -59,18 +59,25 @@ export async function streamOllamaText({
   model = process.env.OLLAMA_MODEL ?? "qwen3.5:35b-a3b",
   baseUrl = process.env.OLLAMA_BASE_URL ?? "http://127.0.0.1:11434",
 }: StreamOllamaTextOptions) {
+  const timeoutMs = Number(process.env.OLLAMA_TIMEOUT_MS ?? "30000");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
     const response = await fetchImpl(`${baseUrl}/api/generate`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
       },
+      signal: controller.signal,
       body: JSON.stringify({
         model,
         prompt,
         stream: true,
       }),
     });
+
+    clearTimeout(timer);
 
     if (!response.ok || !response.body) {
       throw new Error("Ollama unavailable");
@@ -117,6 +124,7 @@ export async function streamOllamaText({
       return fullText.trim();
     }
   } catch {
+    clearTimeout(timer);
     // deterministic fallback below
   }
 

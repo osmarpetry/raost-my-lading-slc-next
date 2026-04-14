@@ -46,6 +46,7 @@ export function ScanWorkbenchView({
             />
             <TerminalPanel
               activeScanId={activeScanId}
+              currentScan={currentScan}
               terminalState={terminalState}
               viewportRef={viewportRef}
             />

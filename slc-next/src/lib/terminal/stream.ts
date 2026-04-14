@@ -33,7 +33,7 @@ export function dismissPrompt(state: TerminalState): TerminalState {
   };
 }
 
-export function appendOllamaChunk(state: TerminalState, chunk: string): TerminalState {
+export function appendModelChunk(state: TerminalState, chunk: string): TerminalState {
   if (!chunk) {
     return state;
   }
@@ -44,13 +44,13 @@ export function appendOllamaChunk(state: TerminalState, chunk: string): Terminal
       lines: state.lines.map((line) =>
         line.id === state.activeStreamLineId ? { ...line, text: `${line.text}${chunk}` } : line,
       ),
-      hadOllamaStream: true,
+      hadModelStream: true,
     };
   }
 
   const streamLine = lineWithId({
-    channel: "ollama",
-    prefix: "[ollama]",
+    channel: "model",
+    prefix: "[model]",
     text: chunk,
     tone: "success",
     streaming: true,
@@ -59,12 +59,12 @@ export function appendOllamaChunk(state: TerminalState, chunk: string): Terminal
   return {
     ...state,
     activeStreamLineId: streamLine.id,
-    hadOllamaStream: true,
+    hadModelStream: true,
     lines: [...state.lines, streamLine],
   };
 }
 
-export function flushOllamaStream(state: TerminalState): TerminalState {
+export function flushModelStream(state: TerminalState): TerminalState {
   if (!state.activeStreamLineId) {
     return state;
   }

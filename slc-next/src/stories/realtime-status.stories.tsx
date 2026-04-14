@@ -7,7 +7,7 @@ function createTerminalState(lines: TerminalState["lines"]): TerminalState {
   return {
     lines,
     activeStreamLineId: null,
-    hadOllamaStream: lines.some((line) => line.channel === "ollama"),
+    hadModelStream: lines.some((line) => line.channel === "model"),
   };
 }
 
@@ -24,6 +24,7 @@ type Story = StoryObj<typeof meta>;
 export const Idle: Story = {
   args: {
     activeScanId: null,
+    currentScan: null,
     terminalState: createTerminalState([
       {
         id: "1",
@@ -40,18 +41,19 @@ export const Idle: Story = {
 export const Streaming: Story = {
   args: {
     activeScanId: "scan-123",
+    currentScan: null,
     terminalState: createTerminalState([
       {
         id: "1",
         channel: "scan",
         prefix: "[scan]",
-        text: "QUALITY · Running Lighthouse",
+        text: "LIGHTHOUSE(local) · Running mobile profile",
         tone: "info",
       },
       {
         id: "2",
-        channel: "ollama",
-        prefix: "[ollama]",
+        channel: "model",
+        prefix: "[model]",
         text: "The offer is visible but still over-explained.",
         tone: "success",
         streaming: true,
@@ -64,6 +66,7 @@ export const Streaming: Story = {
 export const Completed: Story = {
   args: {
     activeScanId: "scan-456",
+    currentScan: null,
     terminalState: createTerminalState([
       {
         id: "1",
@@ -74,8 +77,8 @@ export const Completed: Story = {
       },
       {
         id: "2",
-        channel: "ollama",
-        prefix: "[ollama]",
+        channel: "model",
+        prefix: "[model]",
         text: "Move proof higher and tighten the hero.",
         tone: "success",
       },
@@ -87,6 +90,7 @@ export const Completed: Story = {
 export const Failed: Story = {
   args: {
     activeScanId: "scan-789",
+    currentScan: null,
     terminalState: createTerminalState([
       {
         id: "1",

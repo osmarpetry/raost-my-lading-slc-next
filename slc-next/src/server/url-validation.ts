@@ -102,10 +102,8 @@ export async function normalizeAndValidateUrl(
   }
 
   url.hash = "";
-
-  if (!url.pathname) {
-    url.pathname = "/";
-  }
+  url.pathname = "/";
+  url.search = "";
 
   return url.toString();
 }

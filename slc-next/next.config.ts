@@ -7,6 +7,7 @@ const nextConfig: NextConfig = {
   typescript: {
     tsconfigPath: process.env.SLC_NEXT_TSCONFIG_PATH ?? "tsconfig.json",
   },
+  serverExternalPackages: ["lighthouse", "chrome-launcher"],
 };
 
 export default nextConfig;

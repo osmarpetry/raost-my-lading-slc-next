@@ -26,9 +26,9 @@ export default defineConfig({
   ],
   webServer: {
     command:
-      `rm -f tsconfig.next-test-e2e.json && ` +
+      `rm -rf .next-test-e2e && rm -f tsconfig.next-test-e2e.json && ` +
       `node scripts/write-isolated-next-tsconfig.mjs tsconfig.next-test-e2e.json && ` +
-      `PORT=${port} SLC_NEXT_DIST_DIR=.next-test-e2e SLC_NEXT_TSCONFIG_PATH=tsconfig.next-test-e2e.json pnpm dev`,
+      `NODE_ENV=test SLC_MOCK_OPENAI=true PORT=${port} SLC_NEXT_DIST_DIR=.next-test-e2e SLC_NEXT_TSCONFIG_PATH=tsconfig.next-test-e2e.json pnpm dev`,
     url: `http://127.0.0.1:${port}`,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

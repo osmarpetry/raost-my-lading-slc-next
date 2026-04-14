@@ -10,7 +10,7 @@ interface RouteContext {
 
 export async function GET(_request: Request, context: RouteContext) {
   const { scanId } = await context.params;
-  const snapshot = getScanSnapshot(scanId);
+  const snapshot = await getScanSnapshot(scanId);
 
   if (!snapshot) {
     return Response.json({ message: "Scan not found." }, { status: 404 });

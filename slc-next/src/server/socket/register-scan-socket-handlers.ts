@@ -5,6 +5,7 @@ import {
   type ClientToServerEvents,
   type ServerToClientEvents,
 } from "@/lib/shared/scans";
+import { getScanSnapshot } from "@/server/api/scan-service";
 import { scanManager } from "@/server/runtime";
 
 type ScanIoServer = Server<ClientToServerEvents, ServerToClientEvents>;
@@ -31,16 +32,17 @@ export function registerScanSocketHandlers(io: ScanIoServer) {
       const { scanId } = parsed.data;
       socket.join(scanId);
 
-      const snapshot = scanManager.getScan(scanId);
-      if (!snapshot) {
-        socket.emit("scan:error", {
-          scanId,
-          message: "Scan not found.",
-        });
-        return;
-      }
+      void getScanSnapshot(scanId).then((snapshot) => {
+        if (!snapshot) {
+          socket.emit("scan:error", {
+            scanId,
+            message: "Scan not found.",
+          });
+          return;
+        }
 
-      socket.emit("scan:snapshot", snapshot);
+        socket.emit("scan:snapshot", snapshot);
+      });
     });
 
     socket.on("scan:unsubscribe", (payload) => {

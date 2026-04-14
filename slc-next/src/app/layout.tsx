@@ -23,8 +23,8 @@ const mono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "SLC Next",
-  description: "Single-page live landing checker with websocket terminal progress.",
+  title: "Roast My Landing",
+  description: "Truthful SLC landing-page scan with server-side Lighthouse, explicit provider status, persisted artifacts, and live terminal progress.",
 };
 
 export default function RootLayout({

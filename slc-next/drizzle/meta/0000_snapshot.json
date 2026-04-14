@@ -1,0 +1,331 @@
+{
+  "id": "b089613d-dd49-4155-89d8-8a7e8622ea7c",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.scan_events": {
+      "name": "scan_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "scan_id": {
+          "name": "scan_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "seq": {
+          "name": "seq",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "stage": {
+          "name": "stage",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "message": {
+          "name": "message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload_json": {
+          "name": "payload_json",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "scan_events_scan_seq_idx": {
+          "name": "scan_events_scan_seq_idx",
+          "columns": [
+            {
+              "expression": "scan_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "seq",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "scan_events_scan_id_scan_runs_id_fk": {
+          "name": "scan_events_scan_id_scan_runs_id_fk",
+          "tableFrom": "scan_events",
+          "tableTo": "scan_runs",
+          "columnsFrom": [
+            "scan_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.scan_runs": {
+      "name": "scan_runs",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "submitted_url": {
+          "name": "submitted_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "normalized_url": {
+          "name": "normalized_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "root_url": {
+          "name": "root_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "current_step": {
+          "name": "current_step",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "snapshot_hash": {
+          "name": "snapshot_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "quality_score": {
+          "name": "quality_score",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "quality_band": {
+          "name": "quality_band",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "mobile_lighthouse_score": {
+          "name": "mobile_lighthouse_score",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "desktop_lighthouse_score": {
+          "name": "desktop_lighthouse_score",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lighthouse_source": {
+          "name": "lighthouse_source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "lighthouse_reason": {
+          "name": "lighthouse_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "openai_source": {
+          "name": "openai_source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "openai_reason": {
+          "name": "openai_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "openai_model": {
+          "name": "openai_model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "route_map_json": {
+          "name": "route_map_json",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "pages_json": {
+          "name": "pages_json",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "external_links_json": {
+          "name": "external_links_json",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lighthouse_mobile_json": {
+          "name": "lighthouse_mobile_json",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lighthouse_desktop_json": {
+          "name": "lighthouse_desktop_json",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "site_understanding_json": {
+          "name": "site_understanding_json",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "final_payload_json": {
+          "name": "final_payload_json",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "final_text": {
+          "name": "final_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "preview_text": {
+          "name": "preview_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error_message": {
+          "name": "error_message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "scan_runs_snapshot_hash_idx": {
+          "name": "scan_runs_snapshot_hash_idx",
+          "columns": [
+            {
+              "expression": "snapshot_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "scan_runs_created_at_idx": {
+          "name": "scan_runs_created_at_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

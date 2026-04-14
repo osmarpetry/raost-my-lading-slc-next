@@ -11,9 +11,53 @@ const completedScan: ScanJob = {
   previewRoast: "Clear product, but the hero still asks the visitor to infer too much.",
   fullRoast:
     "Clear product, but the hero still asks the visitor to infer too much. Move the payoff higher and give proof a better seat.",
+  persistedRunId: "66666666-6666-6666-6666-666666666666",
+  persistedState: "persisted",
+  rootUrl: "https://example.com/",
   qualityScore: 72,
   qualityBand: "PASSABLE",
-  lighthouse: null,
+  providerStatus: {
+    lighthouse: {
+      provider: "lighthouse",
+      source: "local",
+      reason: "Local Lighthouse completed",
+      latencyMs: 1200,
+    },
+    openai: {
+      provider: "openai",
+      source: "live",
+      reason: "OpenAI final synthesis completed",
+      model: "gpt-5.4-nano",
+      latencyMs: 800,
+    },
+  },
+  lighthouseProfiles: {
+    mobile: {
+      score: 67,
+      band: "PASSABLE",
+      snapshot: {
+        performance: 63,
+        accessibility: 74,
+        bestPractices: 70,
+        seo: 71,
+        strategy: "mobile",
+        source: "local",
+      },
+    },
+    desktop: {
+      score: 77,
+      band: "STRONG",
+      snapshot: {
+        performance: 76,
+        accessibility: 79,
+        bestPractices: 75,
+        seo: 78,
+        strategy: "desktop",
+        source: "local",
+      },
+    },
+  },
+  finalPayload: null,
   findings: [
     {
       code: "HERO",

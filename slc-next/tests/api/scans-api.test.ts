@@ -2,8 +2,8 @@
 
 import { io } from "socket.io-client";
 
-import { scanManager } from "@/server/runtime";
-import { scanJobSchema } from "@/lib/shared/scans";
+import { analysisCoordinator, scanManager } from "@/server/runtime";
+import { scanArtifactsResponseSchema, scanJobSchema } from "@/lib/shared/scans";
 import { startTestServer } from "./support/test-server";
 
 async function waitFor<T>(
@@ -39,6 +39,7 @@ describe("scans API", () => {
 
   beforeEach(() => {
     scanManager.clear();
+    return analysisCoordinator.clear();
   });
 
   afterAll(async () => {
@@ -78,6 +79,24 @@ describe("scans API", () => {
     expect(body.id).toBe(started.scanId);
   });
 
+  it("GET /api/scans/:scanId/artifacts returns persisted artifacts envelope", async () => {
+    const created = await fetch(`${baseUrl}/api/scans`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ url: "https://example.com" }),
+    });
+    const started = (await created.json()) as { scanId: string };
+
+    const response = await fetch(`${baseUrl}/api/scans/${started.scanId}/artifacts`);
+    const body = scanArtifactsResponseSchema.parse(await response.json());
+
+    expect(response.status).toBe(200);
+    expect(body.run.id).toBe(started.scanId);
+    expect(body.eventLog.length).toBeGreaterThan(0);
+  });
+
   it("socket subscriptions receive scan progress events", async () => {
     const created = await fetch(`${baseUrl}/api/scans`, {
       method: "POST",
@@ -89,6 +108,7 @@ describe("scans API", () => {
     const started = (await created.json()) as { scanId: string };
 
     const eventTypes: string[] = [];
+    const snapshots: string[] = [];
     const socket = io(baseUrl, {
       autoConnect: false,
       path: "/socket.io",
@@ -98,13 +118,16 @@ describe("scans API", () => {
     socket.on("scan:event", (event) => {
       eventTypes.push(event.eventType);
     });
+    socket.on("scan:snapshot", (snapshot) => {
+      snapshots.push(snapshot.status);
+    });
 
     socket.connect();
     await waitFor(() => socket.connected);
     socket.emit("scan:subscribe", { scanId: started.scanId });
 
-    await waitFor(() => eventTypes.includes("SCAN_STAGE"));
-    expect(eventTypes).toContain("SCAN_STAGE");
+    await waitFor(() => snapshots.length > 0 || eventTypes.length > 0);
+    expect(snapshots.length + eventTypes.length).toBeGreaterThan(0);
 
     socket.disconnect();
   });

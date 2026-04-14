@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: slc-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: slc
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - slc-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d slc"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    container_name: slc-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - slc-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  slc-postgres-data:
+  slc-redis-data:

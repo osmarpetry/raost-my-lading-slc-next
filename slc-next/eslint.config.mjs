@@ -10,10 +10,12 @@ const eslintConfig = defineConfig([
     // Default ignores of eslint-config-next:
     ".next/**",
     ".next-test*/**",
+    ".next-real-e2e/**",
     "out/**",
     "build/**",
     "next-env.d.ts",
     "tsconfig.next-test*.json",
+    "tsconfig.real-e2e.json",
     "coverage/**",
     "playwright-report/**",
     "storybook-static/**",
