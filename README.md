@@ -1,6 +1,8 @@
-# slc-next
+# Roast My Landing
 
-Truthful SLC scan app. Server runs real Lighthouse. OpenAI writes final roast. Postgres stores durable artifacts. If dependency is missing, scan fails explicitly.
+Roast My Landing audits a landing page and returns a compact overview with three practical tips: one for marketing, one for SEO, and one for performance.
+
+Server runs real Lighthouse. OpenAI writes final roast. Postgres stores durable artifacts. If dependency is missing, scan fails explicitly.
 
 ## Quickstart
 
